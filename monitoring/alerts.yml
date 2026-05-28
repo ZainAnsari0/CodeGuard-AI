@@ -1,0 +1,100 @@
+# CodeGuard AI — Prometheus Alert Rules
+groups:
+  # ── Application Alerts ──────────────────────────────────────
+  - name: application
+    rules:
+      - alert: HighErrorRate
+        expr: |
+          (
+            sum(rate(http_requests_total{status=~"5.."}[5m]))
+            /
+            sum(rate(http_requests_total[5m]))
+          ) > 0.05
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "High error rate detected"
+          description: "5xx error rate is {{ $value | humanizePercentage }} of all requests (threshold: 5%)"
+
+      - alert: HighLatency
+        expr: |
+          histogram_quantile(0.95, sum(rate(http_request_duration_seconds_bucket[5m])) by (le))
+          > 2.0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High API latency"
+          description: "p95 latency is {{ $value }}s (threshold: 2s)"
+
+      - alert: ScanQueueBacklog
+        expr: codeguard_scans_pending > 50
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Scan queue backlog"
+          description: "{{ $value }} pending scans in queue (threshold: 50)"
+
+  # ── Infrastructure Alerts ───────────────────────────────────
+  - name: infrastructure
+    rules:
+      - alert: ContainerRestarted
+        expr: increase(container_restart_count[5m]) > 0
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Container restarted"
+          description: "A container has restarted in the last 5 minutes"
+
+      - alert: HighMemoryUsage
+        expr: |
+          (
+            container_memory_working_set_bytes / container_spec_memory_limit_bytes
+          ) > 0.85
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High memory usage"
+          description: "Container memory usage is {{ $value | humanizePercentage }} (threshold: 85%)"
+
+      - alert: DiskSpaceLow
+        expr: |
+          (
+            node_filesystem_avail_bytes{mountpoint="/"}
+            / node_filesystem_size_bytes{mountpoint="/"}
+          ) < 0.10
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Low disk space"
+          description: "Only {{ $value | humanizePercentage }} disk space remaining (threshold: 10%)"
+
+  # ── Database Alerts ──────────────────────────────────────────
+  - name: database
+    rules:
+      - alert: PostgreSQLConnectionSaturation
+        expr: |
+          (
+            pg_settings_max_connections
+            / pg_settings_superuser_reserved_connections
+          ) < 1.2
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "PostgreSQL connection saturation"
+          description: "Connections approaching max limit"
+
+      - alert: RedisMemoryHigh
+        expr: redis_memory_used_bytes / redis_memory_max_bytes > 0.85
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Redis memory usage high"
+          description: "Redis memory usage is {{ $value | humanizePercentage }} (threshold: 85%)"

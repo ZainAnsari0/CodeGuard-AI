@@ -1,0 +1,13 @@
+node_modules/
+dist/
+.git/
+.gitignore
+.env
+.env.production
+coverage/
+e2e/
+*.md
+docs/
+.dockerignore
+Dockerfile
+docker-compose*.yml

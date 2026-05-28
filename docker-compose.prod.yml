@@ -1,0 +1,241 @@
+# CodeGuard AI — Production Docker Compose Overlay
+# Usage: docker-compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+#
+# This file OVERRIDES the development docker-compose.yml for production.
+# It removes dev conveniences (bind mounts, --reload, exposed ports)
+# and adds production hardening (resource limits, logging, healthchecks,
+# monitoring, network isolation).
+
+services:
+  # ── PostgreSQL ──────────────────────────────────────────────────
+  postgres:
+    ports: []  # Remove exposed port in production
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+
+  # ── Redis ───────────────────────────────────────────────────────
+  redis:
+    ports: []  # Remove exposed port in production
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+    command: redis-server --appendonly yes --maxmemory 128mb --maxmemory-policy allkeys-lru --requirepass ${REDIS_PASSWORD:-codeguard_redis_pass}
+
+  # ── Docker Socket Proxy ────────────────────────────────────────
+  docker-proxy:
+    image: tecnativa/docker-socket-proxy:0.1
+    container_name: codeguard_docker_proxy
+    restart: unless-stopped
+    environment:
+      CONTAINERS: 1
+      IMAGES: 1
+      NETWORKS: 1
+      POST: 0
+      VOLUMES: 1
+      EXEC: 0
+      ALLOW_RESTARTS: 0
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    deploy:
+      resources:
+        limits:
+          memory: 128M
+    networks:
+      - backend
+
+  # ── FastAPI Backend ─────────────────────────────────────────────
+  api:
+    # Remove dev bind mount and --reload; use docker-proxy instead of direct socket mount
+    volumes:
+      - ./certs:/app/certs:ro
+    command: uvicorn main:app --host 0.0.0.0 --port 8000 --workers 4
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://${POSTGRES_USER:-codeguard_user}:${POSTGRES_PASSWORD:-codeguard_password}@postgres:5432/${POSTGRES_DB:-codeguard}
+      - DEBUG=false
+      - ALLOWED_HOSTS=${ALLOWED_HOSTS:-localhost,127.0.0.1}
+      - DOCKER_HOST=tcp://docker-proxy:2375
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+    networks:
+      - backend
+      - data
+
+  # ── Frontend (Nginx) ───────────────────────────────────────────
+  frontend:
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./certs:/etc/nginx/certs:ro
+    environment:
+      - NGINX_ENV=production
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    deploy:
+      resources:
+        limits:
+          memory: 128M
+    networks:
+      - backend
+      - public
+
+  # ── Celery Worker ──────────────────────────────────────────────
+  celery:
+    environment:
+      - DATABASE_URL=postgresql://${POSTGRES_USER:-codeguard_user}:${POSTGRES_PASSWORD:-codeguard_password}@postgres:5432/${POSTGRES_DB:-codeguard}
+      - DEBUG=false
+    command: celery -A app.tasks.celery_app worker --loglevel=info --concurrency=4
+    healthcheck:
+      test: ["CMD", "python", "-c", "from celery import Celery; app = Celery('healthcheck', broker='${REDIS_URL:-redis://redis:6379/0}'); result = app.control.ping(timeout=5); print(result)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+    networks:
+      - backend
+      - data
+
+  # ── Celery Beat ────────────────────────────────────────────────
+  celery-beat:
+    environment:
+      - DATABASE_URL=postgresql://${POSTGRES_USER:-codeguard_user}:${POSTGRES_PASSWORD:-codeguard_password}@postgres:5432/${POSTGRES_DB:-codeguard}
+      - DEBUG=false
+    healthcheck:
+      test: ["CMD-SHELL", "ps aux | grep 'celery.*beat' | grep -v grep || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+    networks:
+      - backend
+      - data
+
+  # ── Prometheus ──────────────────────────────────────────────────
+  prometheus:
+    image: prom/prometheus:v2.51.0
+    container_name: codeguard_prometheus
+    restart: unless-stopped
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./monitoring/alerts.yml:/etc/prometheus/alerts.yml:ro
+      - prometheus_data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.retention.time=30d'
+      - '--storage.tsdb.retention.size=1GB'
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+    networks:
+      - backend
+      - monitoring
+
+  # ── Grafana ─────────────────────────────────────────────────────
+  grafana:
+    image: grafana/grafana:10.4.0
+    container_name: codeguard_grafana
+    restart: unless-stopped
+    ports:
+      - "3001:3000"
+    environment:
+      - GF_SECURITY_ADMIN_USER=${GRAFANA_ADMIN_USER:-admin}
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD:-change_me_in_production}
+      - GF_USERS_ALLOW_SIGN_UP=false
+    volumes:
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana_data:/var/lib/grafana
+    depends_on:
+      - prometheus
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+    networks:
+      - backend
+      - monitoring
+      - public
+
+networks:
+  public:
+    driver: bridge
+  backend:
+    driver: bridge
+  data:
+    driver: bridge
+  monitoring:
+    driver: bridge
+
+volumes:
+  prometheus_data:
+  grafana_data:

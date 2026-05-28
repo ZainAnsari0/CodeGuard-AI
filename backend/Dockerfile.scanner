@@ -1,0 +1,14 @@
+FROM python:3.11-slim
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    nodejs npm \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN npm install -g acorn
+
+WORKDIR /scanner
+COPY scanner/scanner.py .
+COPY scanner/python_scanner.py .
+COPY scanner/js_scanner.js .
+
+CMD ["python", "scanner.py", "/code"]

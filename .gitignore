@@ -1,0 +1,51 @@
+# Environment files
+.env
+.env.local
+.env.production
+.env.staging
+
+# Private keys and certificates
+certs/*.pem
+certs/*.key
+certs/*.crt
+!certs/.gitkeep
+
+# Python
+__pycache__/
+**/__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+*.egg
+dist/
+build/
+.eggs/
+*.whl
+
+# Virtual environments
+venv/
+.venv/
+env/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Docker
+docker-compose.override.yml
+
+# Backups
+backups/
+*.sql.gz
+*.dump
+
+# Logs
+*.log
+logs/

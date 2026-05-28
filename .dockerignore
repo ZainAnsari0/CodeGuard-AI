@@ -1,0 +1,9 @@
+.git/
+documentation/
+reports/
+*.md
+.env
+.env.production
+backups/
+certs/
+monitoring/

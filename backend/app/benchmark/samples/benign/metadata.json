@@ -1,0 +1,44 @@
+[
+  {
+    "file": "safe_sql_queries.py",
+    "language": "python",
+    "category": "benign",
+    "expected_findings": [],
+    "description": "Safe parameterized SQL queries - should NOT be flagged as vulnerable"
+  },
+  {
+    "file": "safe_xss_prevention.py",
+    "language": "python",
+    "category": "benign",
+    "expected_findings": [],
+    "description": "Properly escaped HTML output - should NOT be flagged as XSS"
+  },
+  {
+    "file": "safe_path_handling.py",
+    "language": "python",
+    "category": "benign",
+    "expected_findings": [],
+    "description": "Path traversal prevention via realpath validation - should NOT be flagged"
+  },
+  {
+    "file": "safe_deserialization.py",
+    "language": "python",
+    "category": "benign",
+    "expected_findings": [],
+    "description": "Safe deserialization using json.loads, yaml.safe_load, ast.literal_eval - should NOT be flagged"
+  },
+  {
+    "file": "safe_credential_handling.py",
+    "language": "python",
+    "category": "benign",
+    "expected_findings": [],
+    "description": "Credentials from environment variables - should NOT be flagged as hardcoded"
+  },
+  {
+    "file": "safe_eval_alternatives.py",
+    "language": "python",
+    "category": "benign",
+    "expected_findings": [],
+    "description": "Safe alternatives to eval/exec using ast.literal_eval and whitelists - should NOT be flagged"
+  }
+]

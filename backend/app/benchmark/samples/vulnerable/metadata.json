@@ -1,0 +1,57 @@
+[
+  {
+    "file": "sql_injection.py",
+    "language": "python",
+    "category": "vulnerable",
+    "expected_findings": [
+      {"cwe_id": "CWE-89", "vulnerability_type": "SQL Injection", "severity": "critical", "min_confidence": 0.8}
+    ],
+    "description": "SQL injection via string concatenation and f-string interpolation in database queries"
+  },
+  {
+    "file": "xss_reflected.py",
+    "language": "python",
+    "category": "vulnerable",
+    "expected_findings": [
+      {"cwe_id": "CWE-79", "vulnerability_type": "Cross-Site Scripting", "severity": "high", "min_confidence": 0.7}
+    ],
+    "description": "Reflected XSS via unsanitized user input embedded in HTML responses"
+  },
+  {
+    "file": "path_traversal.py",
+    "language": "python",
+    "category": "vulnerable",
+    "expected_findings": [
+      {"cwe_id": "CWE-22", "vulnerability_type": "Path Traversal", "severity": "high", "min_confidence": 0.7}
+    ],
+    "description": "Path traversal via unsanitized user input concatenated into file paths"
+  },
+  {
+    "file": "insecure_deserialization.py",
+    "language": "python",
+    "category": "vulnerable",
+    "expected_findings": [
+      {"cwe_id": "CWE-502", "vulnerability_type": "Insecure Deserialization", "severity": "critical", "min_confidence": 0.7},
+      {"cwe_id": "CWE-94", "vulnerability_type": "Code Injection", "severity": "critical", "min_confidence": 0.7}
+    ],
+    "description": "Insecure deserialization using pickle.loads, yaml.load, and eval()"
+  },
+  {
+    "file": "hardcoded_credentials.py",
+    "language": "python",
+    "category": "vulnerable",
+    "expected_findings": [
+      {"cwe_id": "CWE-798", "vulnerability_type": "Hardcoded Credentials", "severity": "critical", "min_confidence": 0.8}
+    ],
+    "description": "Hardcoded database passwords, API keys, and AWS credentials in source code"
+  },
+  {
+    "file": "eval_injection.py",
+    "language": "python",
+    "category": "vulnerable",
+    "expected_findings": [
+      {"cwe_id": "CWE-95", "vulnerability_type": "Eval Injection", "severity": "critical", "min_confidence": 0.8}
+    ],
+    "description": "Arbitrary code execution via eval(), exec(), and __import__() on user input"
+  }
+]

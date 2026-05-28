@@ -1,0 +1,26 @@
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+addopts = "--tb=short -q --strict-markers"
+markers = [
+    "unit: Unit tests (no external dependencies)",
+    "integration: Integration tests (require DB/services)",
+    "slow: Slow-running tests",
+    "requires_docker: Tests requiring Docker daemon",
+    "requires_ollama: Tests requiring Ollama server",
+]
+
+[tool.coverage.run]
+source = ["app"]
+omit = ["*/tests/*", "*/alembic/*", "*/venv/*"]
+
+[tool.coverage.report]
+fail_under = 40
+show_missing = true
+
+[tool.bandit]
+exclude_dirs = ["tests", "venv", ".venv"]
+skips = ["B101"]
