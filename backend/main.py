@@ -58,15 +58,15 @@ async def lifespan(app: FastAPI):
     from app.db.migrations import ensure_schema
     await ensure_schema(engine)
 
+    # Run production readiness checks
+    from app.core.startup_checks import run_startup_checks
+    await run_startup_checks()
+
     logger.info("Application startup complete")
     yield
     logger.info("Shutting down application...")
 
-    # Close token revocation store (Redis connection pool)
-    from app.services.auth import close_revocation_store
-    await close_revocation_store()
-
-    # Close database connections
+    # Close database connections (draining happens automatically)
     await db_manager.close()
 
     # Close AI provider clients if they have open connections
@@ -77,6 +77,13 @@ async def lifespan(app: FastAPI):
                 await provider.client.close()
     except Exception as e:
         logger.warning(f"Error closing AI provider clients: {e}")
+
+    # Close Redis token revocation store
+    try:
+        from app.services.auth import close_revocation_store
+        await close_revocation_store()
+    except Exception as e:
+        logger.warning(f"Error closing revocation store: {e}")
 
     logger.info("Shutdown complete")
 

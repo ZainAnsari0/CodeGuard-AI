@@ -148,6 +148,7 @@ class RedisSettings(BaseSettings):
     """Redis configuration."""
     REDIS_URL: str = "redis://localhost:6379/0"
     REDIS_ENABLED: bool = False
+    REDIS_PASSWORD: Optional[str] = None
 
     class Config:
         env_file = ".env"
@@ -169,20 +170,69 @@ class Settings(
     @model_validator(mode="after")
     def validate_production_secrets(self):
         """Fail fast if default/placeholder secrets are used in production."""
-        if self.ENVIRONMENT == "production":
-            insecure_keys = [
-                "change-me-in-production", "changeme", "secret", "password",
-                "your-secret-key", "your-jwt-secret",
-            ]
-            if not self.SECRET_KEY or self.SECRET_KEY.lower() in insecure_keys:
+        import warnings
+
+        insecure_keys = [
+            "change-me-in-production", "changeme", "secret", "password",
+            "your-secret-key", "your-jwt-secret",
+        ]
+
+        # SECRET_KEY validation
+        if not self.SECRET_KEY:
+            if self.ENVIRONMENT == "production":
+                raise ValueError("SECRET_KEY must be set to a secure value in production — empty string is not allowed")
+            warnings.warn("SECRET_KEY is empty — set a secure value before deploying to production")
+        elif self.SECRET_KEY.lower() in insecure_keys:
+            if self.ENVIRONMENT == "production":
                 raise ValueError("SECRET_KEY must be set to a secure value in production")
-            if not self.JWT_SECRET_KEY or self.JWT_SECRET_KEY.lower() in insecure_keys:
+            warnings.warn(f"SECRET_KEY is set to an insecure default ('{self.SECRET_KEY}') — change before production")
+
+        # JWT_SECRET_KEY validation
+        if not self.JWT_SECRET_KEY:
+            if self.ENVIRONMENT == "production":
+                raise ValueError("JWT_SECRET_KEY must be set to a secure value in production — empty string is not allowed")
+            warnings.warn("JWT_SECRET_KEY is empty — set a secure value before deploying to production")
+        elif self.JWT_SECRET_KEY.lower() in insecure_keys:
+            if self.ENVIRONMENT == "production":
                 raise ValueError("JWT_SECRET_KEY must be set to a secure value in production")
+            warnings.warn(f"JWT_SECRET_KEY is set to an insecure default ('{self.JWT_SECRET_KEY}') — change before production")
+
+        if self.ENVIRONMENT == "production":
             if self.DATABASE_URL.startswith("sqlite"):
                 raise ValueError("SQLite must not be used in production — set DATABASE_URL to PostgreSQL")
             if self.EMAIL_BACKEND == "console":
-                import warnings
                 warnings.warn("EMAIL_BACKEND=console in production — emails will only be logged")
+
+            # SMTP password required when using smtp backend
+            if self.EMAIL_BACKEND == "smtp" and not self.SMTP_PASSWORD:
+                raise ValueError("SMTP_PASSWORD must be set when EMAIL_BACKEND is 'smtp' in production")
+
+            # Grafana admin password must not contain placeholder values
+            grafana_password = getattr(self, "GRAFANA_ADMIN_PASSWORD", None)
+            if grafana_password and grafana_password.lower() in insecure_keys:
+                raise ValueError(
+                    "GRAFANA_ADMIN_PASSWORD contains a placeholder value — set a secure password for production"
+                )
+
+            # Redis password required when Redis is enabled
+            if self.REDIS_ENABLED and not getattr(self, "REDIS_PASSWORD", None):
+                warnings.warn(
+                    "REDIS_ENABLED=True but REDIS_PASSWORD is not set — "
+                    "Redis should be authenticated in production"
+                )
+
+            # CORS localhost check in production
+            localhost_indicators = ["localhost", "127.0.0.1", "0.0.0.0"]
+            localhost_origins = [
+                origin for origin in self.CORS_ORIGINS
+                if any(indicator in origin for indicator in localhost_indicators)
+            ]
+            if localhost_origins:
+                raise ValueError(
+                    f"CORS_ORIGINS contains localhost URLs in production: {localhost_origins}. "
+                    "Set proper production origins instead."
+                )
+
         return self
 
 

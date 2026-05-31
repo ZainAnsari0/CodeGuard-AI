@@ -24,11 +24,177 @@ logger = logging.getLogger(__name__)
 
 
 # ── Token Revocation Store ──────────────────────────────────────
-# Redis-backed with in-memory fallback for single-worker dev mode.
-# Uses TTL-based expiry so revoked tokens auto-expire without cleanup.
+# Production: Redis-backed (required for multi-worker deployments)
+# Development: In-memory (acceptable for single-worker dev mode)
 
-_revoked_tokens: Dict[str, float] = {}  # token_hash -> expiry timestamp (dev fallback only)
-_redis_client = None
+class TokenRevocationStore:
+    """Manages token revocation with Redis backend and safe fallback.
+
+    Production mode (REDIS_ENABLED=True):
+        - Uses Redis for shared state across workers
+        - If Redis is unavailable, FAILS CLOSED (treats tokens as revoked)
+          to prevent security bypass
+        - Uses connection pool for efficiency
+
+    Development mode (REDIS_ENABLED=False):
+        - Uses in-memory dict (single worker only)
+        - Appropriate for local development
+    """
+
+    def __init__(self):
+        self._redis_pool = None
+        self._memory_store: Dict[str, float] = {}  # token_hash -> expiry timestamp
+        self._redis_available: bool = False
+
+    async def _get_redis(self):
+        """Get Redis connection pool. Initializes pool on first call."""
+        if self._redis_pool is not None:
+            return self._redis_pool
+
+        if settings.REDIS_ENABLED:
+            try:
+                import redis.asyncio as aioredis
+                self._redis_pool = aioredis.ConnectionPool.from_url(
+                    settings.REDIS_URL,
+                    decode_responses=True,
+                    max_connections=10,
+                )
+                # Test the connection
+                conn = aioredis.Redis(connection_pool=self._redis_pool)
+                await conn.ping()
+                await conn.aclose()
+                self._redis_available = True
+                logger.info("Token revocation: Redis connection pool initialized")
+                return self._redis_pool
+            except Exception as e:
+                self._redis_available = False
+                if settings.ENVIRONMENT == "production":
+                    logger.error(
+                        "Token revocation: Redis unavailable in production mode! "
+                        "FAILING CLOSED — all revocation checks will return True (revoked). "
+                        "Error: %s", e
+                    )
+                else:
+                    logger.warning(
+                        "Token revocation: Redis unavailable, using in-memory fallback (dev mode): %s", e
+                    )
+                return None
+        return None
+
+    async def _redis_set(self, key: str, ttl_seconds: int, value: str = "1") -> bool:
+        """Set a key in Redis. Returns True if successful."""
+        pool = await self._get_redis()
+        if pool is None:
+            return False
+        import redis.asyncio as aioredis
+        conn = aioredis.Redis(connection_pool=pool)
+        try:
+            await conn.setex(key, ttl_seconds, value)
+            return True
+        except Exception as e:
+            logger.warning("Redis setex failed: %s", e)
+            self._redis_available = False
+            return False
+        finally:
+            await conn.aclose()
+
+    async def _redis_exists(self, key: str) -> Optional[bool]:
+        """Check if key exists in Redis. Returns True/False/None (None=Redis unavailable)."""
+        pool = await self._get_redis()
+        if pool is None:
+            return None
+        import redis.asyncio as aioredis
+        conn = aioredis.Redis(connection_pool=pool)
+        try:
+            result = await conn.exists(key)
+            self._redis_available = True
+            return bool(result)
+        except Exception as e:
+            logger.warning("Redis exists check failed: %s", e)
+            self._redis_available = False
+            return None
+        finally:
+            await conn.aclose()
+
+    async def _memory_set(self, key: str, ttl_seconds: int) -> None:
+        """Set a key in in-memory store."""
+        self._memory_store[key] = (datetime.now(timezone.utc) + timedelta(seconds=ttl_seconds)).timestamp()
+
+    def _memory_exists(self, key: str) -> bool:
+        """Check if key exists in in-memory store and hasn't expired."""
+        expiry = self._memory_store.get(key)
+        if expiry is None:
+            return False
+        if expiry <= datetime.now(timezone.utc).timestamp():
+            del self._memory_store[key]
+            return False
+        return True
+
+    async def revoke(self, token: str, ttl_seconds: int) -> None:
+        """Mark a token as revoked."""
+        token_hash = _revoke_token_hash(token)
+        redis_ok = await self._redis_set(f"revoked:{token_hash}", ttl_seconds)
+        if not redis_ok:
+            if settings.ENVIRONMENT == "production":
+                logger.error(
+                    "Token revocation FAILED in production — Redis unavailable! "
+                    "Token may not be properly revoked across workers."
+                )
+            await self._memory_set(token_hash, ttl_seconds)
+
+    async def is_revoked(self, token: str, ttl_seconds: int) -> bool:
+        """Check if a token has been revoked.
+
+        In production mode with Redis unavailable: FAILS CLOSED (returns True).
+        In development mode: Falls back to in-memory check.
+        """
+        token_hash = _revoke_token_hash(token)
+
+        # Try Redis first
+        redis_result = await self._redis_exists(f"revoked:{token_hash}")
+        if redis_result is True:
+            return True
+        if redis_result is False:
+            return False
+
+        # Redis unavailable
+        if settings.ENVIRONMENT == "production":
+            # FAIL CLOSED: if we can't check Redis in production, treat as revoked
+            logger.error(
+                "Cannot verify token revocation status — Redis unavailable in production. "
+                "Failing closed (treating token as revoked) for security."
+            )
+            return True
+
+        # Development mode: use in-memory fallback
+        return self._memory_exists(token_hash)
+
+    async def is_refresh_revoked(self, token: str) -> bool:
+        """Check if a refresh token is revoked."""
+        return await self.is_revoked(token, settings.JWT_REFRESH_TOKEN_EXPIRE_DAYS * 86400)
+
+    async def is_access_revoked(self, token: str) -> bool:
+        """Check if an access token is revoked."""
+        return await self.is_revoked(token, settings.JWT_ACCESS_TOKEN_EXPIRE_MINUTES * 60)
+
+    async def revoke_refresh(self, token: str) -> None:
+        """Revoke a refresh token."""
+        await self.revoke(token, settings.JWT_REFRESH_TOKEN_EXPIRE_DAYS * 86400)
+
+    async def revoke_access(self, token: str) -> None:
+        """Revoke an access token."""
+        await self.revoke(token, settings.JWT_ACCESS_TOKEN_EXPIRE_MINUTES * 60)
+
+    async def close(self):
+        """Close Redis connection pool. Call at application shutdown."""
+        if self._redis_pool is not None:
+            import redis.asyncio as aioredis
+            await self._redis_pool.disconnect()
+            self._redis_pool = None
+
+
+# Singleton instance
+_revocation_store = TokenRevocationStore()
 
 
 def _revoke_token_hash(token: str) -> str:
@@ -36,119 +202,32 @@ def _revoke_token_hash(token: str) -> str:
     return hashlib.sha256(token.encode()).hexdigest()
 
 
-async def _get_redis():
-    """Lazy-initialize async Redis client for token revocation.
-
-    Reconnects if the existing connection is stale.
-    """
-    global _redis_client
-    if _redis_client is not None:
-        try:
-            await _redis_client.ping()
-            return _redis_client
-        except Exception:
-            # Connection is stale — close and recreate
-            try:
-                await _redis_client.aclose()
-            except Exception:
-                pass
-            _redis_client = None
-
-    if settings.REDIS_ENABLED:
-        try:
-            import redis.asyncio as aioredis
-            _redis_client = aioredis.from_url(settings.REDIS_URL, decode_responses=True)
-            await _redis_client.ping()
-            return _redis_client
-        except Exception as e:
-            logger.warning("Token revocation: Redis unavailable, using in-memory fallback: %s", e)
-            _redis_client = None
-    return None
-
+# ── Public API (backward compatible function signatures) ────────
 
 async def revoke_refresh_token(token: str) -> None:
     """Mark a refresh token as revoked."""
-    token_hash = _revoke_token_hash(token)
-    ttl_seconds = settings.JWT_REFRESH_TOKEN_EXPIRE_DAYS * 86400
-    r = await _get_redis()
-    if r:
-        try:
-            await r.setex(f"revoked:{token_hash}", ttl_seconds, "1")
-            return
-        except Exception as e:
-            logger.warning("Redis revocation failed, using in-memory fallback: %s", e)
-    # In-memory fallback
-    _revoked_tokens[token_hash] = (datetime.now(timezone.utc) + timedelta(seconds=ttl_seconds)).timestamp()
+    await _revocation_store.revoke_refresh(token)
 
 
 async def is_refresh_token_revoked(token: str) -> bool:
-    """Check if a refresh token has been revoked.
-
-    Includes a 5-second grace period to handle concurrent refresh requests:
-    if a token was revoked within the last 5 seconds, we allow it through
-    so that parallel tab refreshes don't fail due to TOCTOU races.
-    """
-    token_hash = _revoke_token_hash(token)
-    r = await _get_redis()
-    if r:
-        try:
-            # Check revocation with grace period
-            remaining = await r.ttl(f"revoked:{token_hash}")
-            if remaining == -2:  # Key doesn't exist
-                return False
-            # If revoked less than 5 seconds ago, allow through (grace period)
-            full_ttl = settings.JWT_REFRESH_TOKEN_EXPIRE_DAYS * 86400
-            if remaining > full_ttl - 5:
-                return False  # Just revoked — grace period
-            return True
-        except Exception:
-            pass  # Fall through to in-memory check
-    # In-memory fallback
-    expiry = _revoked_tokens.get(token_hash)
-    if expiry is None:
-        return False
-    # Grace period: allow tokens revoked within the last 5 seconds
-    revoke_time = expiry - (settings.JWT_REFRESH_TOKEN_EXPIRE_DAYS * 86400)
-    if (datetime.now(timezone.utc).timestamp() - revoke_time) < 5:
-        return False
-    if expiry <= datetime.now(timezone.utc).timestamp():
-        del _revoked_tokens[token_hash]
-        return False
-    return True
+    """Check if a refresh token has been revoked."""
+    return await _revocation_store.is_refresh_revoked(token)
 
 
 async def revoke_access_token(token: str) -> None:
     """Mark an access token as revoked (used on logout)."""
-    token_hash = _revoke_token_hash(token)
-    ttl_seconds = settings.JWT_ACCESS_TOKEN_EXPIRE_MINUTES * 60
-    r = await _get_redis()
-    if r:
-        try:
-            await r.setex(f"revoked:{token_hash}", ttl_seconds, "1")
-            return
-        except Exception as e:
-            logger.warning("Redis revocation failed, using in-memory fallback: %s", e)
-    # In-memory fallback
-    _revoked_tokens[token_hash] = (datetime.now(timezone.utc) + timedelta(seconds=ttl_seconds)).timestamp()
+    await _revocation_store.revoke_access(token)
 
 
 async def is_access_token_revoked(token: str) -> bool:
     """Check if an access token has been revoked."""
-    token_hash = _revoke_token_hash(token)
-    r = await _get_redis()
-    if r:
-        try:
-            return bool(await r.exists(f"revoked:{token_hash}"))
-        except Exception:
-            pass  # Fall through to in-memory check
-    # In-memory fallback
-    expiry = _revoked_tokens.get(token_hash)
-    if expiry is None:
-        return False
-    if expiry <= datetime.now(timezone.utc).timestamp():
-        del _revoked_tokens[token_hash]
-        return False
-    return True
+    return await _revocation_store.is_access_revoked(token)
+
+
+async def close_revocation_store() -> None:
+    """Close the revocation store (call during application shutdown)."""
+    await _revocation_store.close()
+
 
 # Password hashing — use bcrypt directly to avoid passlib 1.7.4 / bcrypt 4.x compat issue
 def verify_password(plain_password: str, hashed_password: str) -> bool:
