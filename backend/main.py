@@ -19,8 +19,8 @@ from app.core.logging import setup_logging
 setup_logging(debug=False, log_level_name=settings.LOG_LEVEL)
 logger = structlog.get_logger()
 
-# Import database models
-from app.db.session import engine
+# Import database manager and models
+from app.infrastructure.database import db_manager
 from sqlmodel import SQLModel
 from app.api.routes import api_router
 from app.core.exceptions import (
@@ -52,16 +52,18 @@ async def lifespan(app: FastAPI):
     if not validate_jwt_keys_on_startup():
         logger.warning("JWT key validation failed — RS256 may not work correctly")
 
-    # Create database tables
-    async with engine.begin() as conn:
-        await conn.run_sync(SQLModel.metadata.create_all)
+    # Initialize database and ensure schema is up to date
+    await db_manager.init()
+    from app.infrastructure.database import engine
+    from app.db.migrations import ensure_schema
+    await ensure_schema(engine)
 
     logger.info("Application startup complete")
     yield
     logger.info("Shutting down application...")
 
     # Close database connections
-    await engine.dispose()
+    await db_manager.close()
 
     # Close AI provider clients if they have open connections
     try:
@@ -90,7 +92,21 @@ app = FastAPI(
 
 # Configure trusted hosts
 ALLOWED_HOSTS = getattr(settings, "ALLOWED_HOSTS", ["*"])
-if ALLOWED_HOSTS != ["*"]:
+
+if _is_production:
+    # In production, TrustedHostMiddleware is ALWAYS active
+    if "*" in ALLOWED_HOSTS:
+        logger.warning(
+            "ALLOWED_HOSTS contains '*' in production — "
+            "this effectively disables host validation. "
+            "Set ALLOWED_HOSTS to your actual domains."
+        )
+    app.add_middleware(
+        TrustedHostMiddleware,
+        allowed_hosts=ALLOWED_HOSTS,
+    )
+elif ALLOWED_HOSTS != ["*"]:
+    # In development, only add middleware if hosts are explicitly configured
     app.add_middleware(
         TrustedHostMiddleware,
         allowed_hosts=ALLOWED_HOSTS,
