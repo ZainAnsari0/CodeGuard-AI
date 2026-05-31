@@ -54,9 +54,19 @@ def _init_engine():
                     "pool_recycle": 3600,
                 })
                 if settings.DATABASE_STATEMENT_TIMEOUT > 0:
-                    engine_kwargs["connect_args"] = {
-                        "options": f"-c statement_timeout={settings.DATABASE_STATEMENT_TIMEOUT * 1000}"
-                    }
+                    timeout_ms = settings.DATABASE_STATEMENT_TIMEOUT * 1000
+                    if settings.DATABASE_URL.startswith("postgresql+asyncpg"):
+                        # asyncpg uses server_settings, not libpq options
+                        engine_kwargs["connect_args"] = {
+                            "server_settings": {
+                                "statement_timeout": str(timeout_ms)
+                            }
+                        }
+                    else:
+                        # psycopg2 / other drivers use libpq options
+                        engine_kwargs["connect_args"] = {
+                            "options": f"-c statement_timeout={timeout_ms}"
+                        }
 
             _engine = create_async_engine(settings.DATABASE_URL, **engine_kwargs)
 
