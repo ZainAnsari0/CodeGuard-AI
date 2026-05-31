@@ -1,8 +1,9 @@
-# Environment files
+# Environment files — NEVER commit real secrets
 .env
 .env.local
 .env.production
 .env.staging
+.env.*.local
 
 # Private keys and certificates
 certs/*.pem
@@ -21,11 +22,14 @@ dist/
 build/
 .eggs/
 *.whl
-
-# Virtual environments
 venv/
 .venv/
 env/
+
+# Node
+node_modules/
+frontend/dist/
+frontend/.vite/
 
 # IDE
 .idea/
@@ -48,7 +52,20 @@ backups/
 
 # Logs
 *.log
-logs/venv/
-backend/venv/
-__pycache__/
-node_modules/
+logs/
+
+# Test artifacts
+backend/.coverage
+backend/htmlcov/
+backend/.pytest_cache/
+backend/.mypy_cache/
+backend/.ruff_cache/
+frontend/coverage/
+
+# Database
+*.db
+*.sqlite3
+
+# Monitoring data
+monitoring/grafana/data/
+prometheus_data/

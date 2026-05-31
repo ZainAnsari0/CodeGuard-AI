@@ -1,31 +1,38 @@
-FROM python:3.11-slim
+# ═══════════════════════════════════════════════════════════════════
+# CodeGuard AI — Multi-Stage Production Celery Dockerfile
+# ═══════════════════════════════════════════════════════════════════
+# Shares the same builder pattern as the API container.
+# ═══════════════════════════════════════════════════════════════════
 
-WORKDIR /app
+# ── Stage 1: Build dependencies ──────────────────────────────────
+FROM python:3.11-slim AS builder
 
-# Install system dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc \
     libpq-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy requirements first for better caching
+WORKDIR /build
 COPY requirements.txt .
+RUN pip install --no-cache-dir --prefix=/install -r requirements.txt
 
-# Install Python dependencies
-RUN pip install --no-cache-dir -r requirements.txt
+# ── Stage 2: Runtime ─────────────────────────────────────────────
+FROM python:3.11-slim AS runtime
 
-# Create non-root user and set proper ownership
-RUN useradd -m -u 1000 appuser && \
-    chown -R appuser:appuser /app
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libpq5 \
+    curl \
+    && rm -rf /var/lib/apt/lists/* \
+    && groupadd -g 1000 appgroup \
+    && useradd -m -u 1000 -g appgroup appuser
 
-# Copy application code
+COPY --from=builder /install /usr/local
+
+WORKDIR /app
 COPY . .
+RUN chown -R appuser:appgroup /app
 
-# Ensure appuser owns all application files
-RUN chown -R appuser:appuser /app
-
-# Switch to non-root user
 USER appuser
 
-# Run the Celery worker
-CMD ["celery", "-A", "app.tasks.celery_app", "worker", "--loglevel=info"]
+# Default Celery worker command (override in docker-compose)
+CMD ["celery", "-A", "app.tasks.celery_app", "worker", "--loglevel=info", "--concurrency=4"]

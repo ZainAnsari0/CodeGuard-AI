@@ -21,6 +21,7 @@
     "@tanstack/react-query": "^5.100.10",
     "axios": "^1.16.1",
     "dompurify": "^3.4.7",
+    "esbuild": "^0.28.0",
     "lucide-react": "^1.16.0",
     "react": "^19.2.6",
     "react-diff-viewer-continued": "^4.2.2",

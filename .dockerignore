@@ -1,9 +1,68 @@
-.git/
+# ═══════════════════════════════════════════════════════════════════
+# CodeGuard AI — Root .dockerignore
+# Exclude everything not needed for production builds
+# ═══════════════════════════════════════════════════════════════════
+
+# Documentation
 documentation/
 reports/
 *.md
+!README.md
+
+# Environment and secrets
 .env
+.env.local
 .env.production
+.env.staging
+.env.*.local
+
+# Git
+.git/
+.gitignore
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Backups
 backups/
-certs/
-monitoring/
+*.sql.gz
+*.dump
+
+# Monitoring data
+monitoring/grafana/data/
+prometheus_data/
+
+# Certificates (mounted at runtime)
+certs/*.pem
+certs/*.key
+certs/*.crt
+!certs/.gitkeep
+
+# Docker
+docker-compose.override.yml
+deploy/
+
+# CI/CD
+.github/
+
+# Test artifacts
+backend/.coverage
+backend/htmlcov/
+backend/.pytest_cache/
+backend/.mypy_cache/
+backend/.ruff_cache/
+frontend/coverage/
+frontend/e2e/
+
+# Build artifacts (rebuilt in Docker)
+backend/__pycache__/
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
