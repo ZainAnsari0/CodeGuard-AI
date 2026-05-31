@@ -56,12 +56,14 @@ def set_rate_limit_cookie(request: Request, response: Response) -> Response:
     """Middleware to set the rate-limit ID cookie if a new one was generated."""
     new_id = getattr(request.state, "_new_rate_id", None)
     if new_id:
+        secure = settings.ENVIRONMENT == "production"
         response.set_cookie(
             _RATE_LIMIT_COOKIE,
             new_id,
             max_age=86400 * 30,  # 30 days
             httponly=True,
             samesite="lax",
+            secure=secure,
         )
     return response
 

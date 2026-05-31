@@ -8,6 +8,7 @@ from app.api.middleware.request import (
     RequestIdMiddleware,
     SecurityHeadersMiddleware,
     RequestTimingMiddleware,
+    HTTPSEnforcementMiddleware,
 )
 
 __all__ = [
@@ -15,4 +16,5 @@ __all__ = [
     "RequestIdMiddleware",
     "SecurityHeadersMiddleware",
     "RequestTimingMiddleware",
+    "HTTPSEnforcementMiddleware",
 ]

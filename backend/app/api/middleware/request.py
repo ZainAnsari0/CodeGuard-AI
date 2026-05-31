@@ -1,6 +1,6 @@
 """CodeGuard AI - Request Middleware
 
-Adds request tracing and security headers to every response.
+Adds request tracing, security headers, and HTTPS enforcement to every response.
 """
 
 import uuid
@@ -8,6 +8,8 @@ import time
 import structlog
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
+from starlette.responses import JSONResponse
+from app.core.config import settings
 
 logger = structlog.get_logger()
 
@@ -53,3 +55,44 @@ class RequestTimingMiddleware(BaseHTTPMiddleware):
             duration=f"{duration:.4f}s",
         )
         return response
+
+
+class HTTPSEnforcementMiddleware(BaseHTTPMiddleware):
+    """Enforces HTTPS in production by checking the X-Forwarded-Proto header.
+
+    In production, requests without X-Forwarded-Proto: https are rejected
+    with a 403 response, except for health/ready endpoints needed by
+    load balancers.
+    """
+
+    EXEMPT_PATHS = {"/health", "/ready"}
+
+    async def dispatch(self, request: Request, call_next):
+        # Only enforce in production
+        if settings.ENVIRONMENT != "production":
+            return await call_next(request)
+
+        # Exempt health/ready paths for load balancers
+        if request.url.path in self.EXEMPT_PATHS:
+            return await call_next(request)
+
+        # Check for HTTPS via reverse proxy header
+        forwarded_proto = request.headers.get("X-Forwarded-Proto", "").lower()
+        if forwarded_proto != "https":
+            logger.warning(
+                "https_enforcement_blocked",
+                path=request.url.path,
+                forwarded_proto=forwarded_proto,
+            )
+            return JSONResponse(
+                status_code=403,
+                content={
+                    "error": {
+                        "code": "HTTPS_REQUIRED",
+                        "message": "HTTPS is required. Please use HTTPS to access this resource.",
+                        "details": {},
+                    }
+                },
+            )
+
+        return await call_next(request)

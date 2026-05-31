@@ -62,6 +62,10 @@ async def lifespan(app: FastAPI):
     yield
     logger.info("Shutting down application...")
 
+    # Close token revocation store (Redis connection pool)
+    from app.services.auth import close_revocation_store
+    await close_revocation_store()
+
     # Close database connections
     await db_manager.close()
 
@@ -158,9 +162,11 @@ from app.api.middleware import (
     DomainExceptionMiddleware,
     RequestIdMiddleware,
     SecurityHeadersMiddleware,
+    HTTPSEnforcementMiddleware,
 )
 
 app.add_middleware(SecurityHeadersMiddleware)
+app.add_middleware(HTTPSEnforcementMiddleware)
 app.add_middleware(RequestIdMiddleware)
 app.add_middleware(DomainExceptionMiddleware)
 

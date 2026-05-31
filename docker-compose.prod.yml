@@ -91,6 +91,7 @@ services:
   api:
     volumes:
       - ./certs:/app/certs:ro
+      - upload_data:/app/uploads
     command: uvicorn main:app --host 0.0.0.0 --port 8000 --workers 4 --loop uvloop --http httptools
     environment:
       - DATABASE_URL=postgresql+asyncpg://${POSTGRES_USER:-codeguard_user}:${POSTGRES_PASSWORD:-codeguard_password}@postgres:5432/${POSTGRES_DB:-codeguard}
@@ -98,6 +99,7 @@ services:
       - ENVIRONMENT=production
       - ALLOWED_HOSTS=${ALLOWED_HOSTS:-codeguard.example.com,www.codeguard.example.com}
       - DOCKER_HOST=tcp://docker-proxy:2375
+      - UPLOAD_DIR=/app/uploads
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/api/v1/health"]
       interval: 30s
@@ -382,3 +384,5 @@ volumes:
     name: codeguard_grafana
   certbot_webroot:
     name: codeguard_certbot_webroot
+  upload_data:
+    name: codeguard_uploads
