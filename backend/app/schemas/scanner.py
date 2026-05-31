@@ -4,7 +4,7 @@ Pydantic models for scan upload, status, and results.
 """
 
 from datetime import datetime
-from typing import Optional, List, Dict
+from typing import Optional, List, Dict, Any
 from pydantic import BaseModel, Field
 
 
@@ -62,5 +62,5 @@ class ScanResultResponse(BaseModel):
     status: str
     total_files: int = 0
     findings: List[FindingResponse] = []
-    code_files: Dict[str, str] = Field(default_factory=dict, description="file_path -> file_content")
+    code_files: Dict[str, Dict[str, Any]] = Field(default_factory=dict, description="file_name -> {id, language, lines}")
     summary: Optional[dict] = None

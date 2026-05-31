@@ -27,7 +27,7 @@ logger = logging.getLogger(__name__)
 # Redis-backed with in-memory fallback for single-worker dev mode.
 # Uses TTL-based expiry so revoked tokens auto-expire without cleanup.
 
-_revoked_tokens: Dict[str, float] = {}  # token_hash -> expiry timestamp (fallback)
+_revoked_tokens: Dict[str, float] = {}  # token_hash -> expiry timestamp (dev fallback only)
 _redis_client = None
 
 
@@ -37,16 +37,33 @@ def _revoke_token_hash(token: str) -> str:
 
 
 async def _get_redis():
-    """Lazy-initialize async Redis client for token revocation."""
+    """Lazy-initialize async Redis client for token revocation.
+
+    Reconnects if the existing connection is stale.
+    """
     global _redis_client
-    if _redis_client is None and settings.REDIS_ENABLED:
+    if _redis_client is not None:
+        try:
+            await _redis_client.ping()
+            return _redis_client
+        except Exception:
+            # Connection is stale — close and recreate
+            try:
+                await _redis_client.aclose()
+            except Exception:
+                pass
+            _redis_client = None
+
+    if settings.REDIS_ENABLED:
         try:
             import redis.asyncio as aioredis
             _redis_client = aioredis.from_url(settings.REDIS_URL, decode_responses=True)
+            await _redis_client.ping()
+            return _redis_client
         except Exception as e:
             logger.warning("Token revocation: Redis unavailable, using in-memory fallback: %s", e)
             _redis_client = None
-    return _redis_client
+    return None
 
 
 async def revoke_refresh_token(token: str) -> None:
@@ -65,17 +82,34 @@ async def revoke_refresh_token(token: str) -> None:
 
 
 async def is_refresh_token_revoked(token: str) -> bool:
-    """Check if a refresh token has been revoked."""
+    """Check if a refresh token has been revoked.
+
+    Includes a 5-second grace period to handle concurrent refresh requests:
+    if a token was revoked within the last 5 seconds, we allow it through
+    so that parallel tab refreshes don't fail due to TOCTOU races.
+    """
     token_hash = _revoke_token_hash(token)
     r = await _get_redis()
     if r:
         try:
-            return bool(await r.exists(f"revoked:{token_hash}"))
+            # Check revocation with grace period
+            remaining = await r.ttl(f"revoked:{token_hash}")
+            if remaining == -2:  # Key doesn't exist
+                return False
+            # If revoked less than 5 seconds ago, allow through (grace period)
+            full_ttl = settings.JWT_REFRESH_TOKEN_EXPIRE_DAYS * 86400
+            if remaining > full_ttl - 5:
+                return False  # Just revoked — grace period
+            return True
         except Exception:
             pass  # Fall through to in-memory check
     # In-memory fallback
     expiry = _revoked_tokens.get(token_hash)
     if expiry is None:
+        return False
+    # Grace period: allow tokens revoked within the last 5 seconds
+    revoke_time = expiry - (settings.JWT_REFRESH_TOKEN_EXPIRE_DAYS * 86400)
+    if (datetime.now(timezone.utc).timestamp() - revoke_time) < 5:
         return False
     if expiry <= datetime.now(timezone.utc).timestamp():
         del _revoked_tokens[token_hash]

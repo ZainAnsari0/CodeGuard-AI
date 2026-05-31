@@ -6,6 +6,7 @@ Spawn → Run Analysis → Destroy lifecycle.
 
 import asyncio
 import logging
+import threading
 from typing import Optional, Dict, Any
 
 from app.core.config import settings
@@ -40,20 +41,24 @@ class ContainerService:
 
     def __init__(self):
         self._client = None
+        self._lock = threading.Lock()
 
     def _get_client(self):
-        """Lazy-initialize Docker client."""
+        """Lazy-initialize Docker client (thread-safe)."""
         if self._client is None:
-            try:
-                import docker
-                self._client = docker.from_env()
-                logger.info("Docker client initialized successfully")
-            except ImportError:
-                logger.error("docker package not installed. Install with: pip install docker")
-                raise
-            except Exception as e:
-                logger.error(f"Failed to initialize Docker client: {e}")
-                raise
+            with self._lock:
+                # Double-check after acquiring lock
+                if self._client is None:
+                    try:
+                        import docker
+                        self._client = docker.from_env()
+                        logger.info("Docker client initialized successfully")
+                    except ImportError:
+                        logger.error("docker package not installed. Install with: pip install docker")
+                        raise
+                    except Exception as e:
+                        logger.error(f"Failed to initialize Docker client: {e}")
+                        raise
         return self._client
 
     def close(self):
@@ -117,6 +122,7 @@ class ContainerService:
                     cap_drop=["ALL"],
                     security_opt=["no-new-privileges:true"],
                     tmpfs={"/tmp": "size=100m"},
+                    labels={"codeguard": "true"},
                 )
 
                 logger.info(f"Container {container.short_id} spawned, waiting for completion (timeout={timeout}s)")

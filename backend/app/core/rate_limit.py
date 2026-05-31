@@ -12,9 +12,8 @@ Trust model for X-Forwarded-For:
 
 import uuid
 
-from fastapi import Request
+from fastapi import Request, Response
 from slowapi import Limiter
-from slowapi.util import get_remote_address
 from app.core.config import settings
 
 _RATE_LIMIT_COOKIE = "x-rate-id"
@@ -27,8 +26,7 @@ def get_client_ip(request: Request) -> str:
       1. Rightmost IP from X-Forwarded-For (trusted proxy header)
       2. Direct connection host (request.client.host)
       3. Persistent cookie (x-rate-id) for anonymous clients
-      4. Per-request UUID fallback — avoids collapsing all
-         unidentified traffic into a single shared bucket
+      4. Per-request UUID fallback — set as cookie for subsequent requests
     """
     # 1. Trusted reverse-proxy header
     forwarded = request.headers.get("X-Forwarded-For", "")
@@ -46,9 +44,26 @@ def get_client_ip(request: Request) -> str:
     if rate_id:
         return rate_id
 
-    # 4. Per-request fallback — each unidentified request gets its own
-    #    unique identifier so no shared bucket throttles everyone.
-    return str(uuid.uuid4())
+    # 4. Generate a persistent ID and set it as a cookie so
+    #    subsequent requests from the same client are bucketed together.
+    rate_id = str(uuid.uuid4())
+    # Store on request state so middleware can set the cookie on the response
+    request.state._new_rate_id = rate_id
+    return rate_id
+
+
+def set_rate_limit_cookie(request: Request, response: Response) -> Response:
+    """Middleware to set the rate-limit ID cookie if a new one was generated."""
+    new_id = getattr(request.state, "_new_rate_id", None)
+    if new_id:
+        response.set_cookie(
+            _RATE_LIMIT_COOKIE,
+            new_id,
+            max_age=86400 * 30,  # 30 days
+            httponly=True,
+            samesite="lax",
+        )
+    return response
 
 
 limiter = Limiter(

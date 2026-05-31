@@ -5,8 +5,9 @@ Local LLM inference client for code analysis and explanation.
 
 import json
 import logging
+import socket
 from typing import Optional, Dict, Any, List
-from ipaddress import ip_address
+from ipaddress import ip_address, ip_network
 from urllib.parse import urlparse
 
 import httpx
@@ -22,25 +23,42 @@ _ALLOWED_OLLAMA_HOSTS = {"localhost", "127.0.0.1", "::1", "host.docker.internal"
 def _validate_ollama_url(url: str) -> str:
     """Validate Ollama URL to prevent SSRF attacks.
 
-    Only explicitly-allowed local hostnames are permitted.
-    Private/internal IPs are blocked. No public IP or unknown hostname passes.
+    Resolves the hostname and verifies ALL resolved IPs are in the
+    loopback/private range. Rejects any hostname that resolves to a
+    non-local IP, preventing DNS rebinding and hex-encoded IP bypasses.
     """
     parsed = urlparse(url)
     hostname = parsed.hostname or ""
 
+    # Quick check: allowlisted hostnames pass without DNS resolution
     if hostname in _ALLOWED_OLLAMA_HOSTS:
         return url
 
-    # If hostname is an IP, reject private/internal IPs and allow nothing else
+    # Resolve hostname and verify all IPs are loopback/private
     try:
-        ip = ip_address(hostname)
-        # All non-allowlisted IPs are rejected, including public ones
-        raise ValueError(f"Ollama URL must use a local hostname from allowlist, got IP: {hostname}")
-    except ValueError as e:
-        if "must use a local hostname" in str(e):
-            raise
-        # hostname is not an IP and not in allowlist
-        raise ValueError(f"Ollama URL hostname not in allowlist: {hostname}")
+        addr_infos = socket.getaddrinfo(hostname, parsed.port or 11434, proto=socket.IPPROTO_TCP)
+    except socket.gaierror:
+        raise ValueError(f"Ollama URL hostname could not be resolved: {hostname}")
+
+    _loopback_networks = [
+        ip_network("127.0.0.0/8"),
+        ip_network("::1/128"),
+        ip_network("10.0.0.0/8"),
+        ip_network("172.16.0.0/12"),
+        ip_network("192.168.0.0/16"),
+        ip_network("fc00::/7"),
+    ]
+
+    for info in addr_infos:
+        ip = ip_address(info[4][0])
+        if not any(ip in net for net in _loopback_networks):
+            raise ValueError(
+                f"Ollama URL resolves to non-local IP {ip}, which is not allowed. "
+                f"Hostname {hostname} must resolve to a loopback/private IP."
+            )
+
+    # If all resolved IPs are local, allow it
+    return url
 
 
 class OllamaClient:
@@ -53,10 +71,17 @@ class OllamaClient:
         self.timeout = 120.0
         self._client: Optional[httpx.AsyncClient] = None
 
-    def _get_client(self) -> httpx.AsyncClient:
-        """Get or create the shared httpx client for connection reuse."""
-        if self._client is None or self._client.is_closed:
-            self._client = httpx.AsyncClient(timeout=self.timeout)
+    async def _get_client(self) -> httpx.AsyncClient:
+        """Get or create the shared httpx client for connection reuse.
+
+        Properly closes stale connections before creating a new client.
+        """
+        if self._client is not None:
+            if not self._client.is_closed:
+                return self._client
+            # Close the stale client before creating a new one
+            await self._client.aclose()
+        self._client = httpx.AsyncClient(timeout=self.timeout)
         return self._client
 
     async def generate(
@@ -91,7 +116,7 @@ class OllamaClient:
         if options:
             payload["options"] = options
 
-        client = self._get_client()
+        client = await self._get_client()
         response = await client.post(
             f"{self.base_url}/api/generate",
             json=payload,
@@ -144,7 +169,7 @@ class OllamaClient:
         if options:
             payload["options"] = options
 
-        client = self._get_client()
+        client = await self._get_client()
         response = await client.post(
             f"{self.base_url}/api/chat",
             json=payload,
@@ -160,7 +185,7 @@ class OllamaClient:
             Dictionary with available (bool), models (list), and error (str|None)
         """
         try:
-            client = self._get_client()
+            client = await self._get_client()
             response = await client.get(f"{self.base_url}/api/tags")
             response.raise_for_status()
             data = response.json()
@@ -199,7 +224,7 @@ class OllamaClient:
         """
         model = model or self.model
         try:
-            client = self._get_client()
+            client = await self._get_client()
             # Use extended timeout for model pulls
             response = await client.post(
                 f"{self.base_url}/api/pull",

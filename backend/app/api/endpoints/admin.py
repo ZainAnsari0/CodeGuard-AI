@@ -97,9 +97,6 @@ async def update_user(
         raise HTTPException(status_code=404, detail="User not found")
 
     if data.role is not None:
-        valid_roles = [UserRole.DEVELOPER, UserRole.INSTRUCTOR, UserRole.ADMIN]
-        if data.role not in valid_roles:
-            raise HTTPException(status_code=400, detail=f"Invalid role. Must be: {', '.join(valid_roles)}")
         user.role = data.role
     if data.is_active is not None:
         user.is_active = data.is_active
@@ -109,14 +106,14 @@ async def update_user(
     await db.commit()
     await db.refresh(user)
 
-    # Log the event
+    # Log the event — exclude sensitive fields
     event = SystemEvent(
         id=str(uuid.uuid4()),
         event_type="user_updated",
         severity="info",
         user_id=current_user.id,
         message=f"Admin updated user {user.id}: role={user.role}, is_active={user.is_active}",
-        metadata={"target_user_id": user.id, "changes": data.model_dump()},
+        metadata={"target_user_id": user.id, "changes": {k: v for k, v in data.model_dump().items() if v is not None}},
     )
     db.add(event)
     await db.commit()
@@ -186,11 +183,12 @@ async def system_health(
     async def _check_redis():
         try:
             from app.services.cache import prompt_cache
-            await prompt_cache.set("health", "check", "default", {"ok": True})
-            result = await prompt_cache.get("health", "check", "default")
-            if result:
+            health_info = prompt_cache.health_check()
+            if health_info.get("connected"):
                 return ServiceStatus(name="redis", status="healthy", latency_ms=0).model_dump()
-            return ServiceStatus(name="redis", status="degraded", details="Cache miss").model_dump()
+            if health_info.get("enabled") and not health_info.get("connected"):
+                return ServiceStatus(name="redis", status="degraded", details="Cache using LRU fallback").model_dump()
+            return ServiceStatus(name="redis", status="unhealthy", details=health_info.get("error", "Unknown")[:100]).model_dump()
         except Exception as e:
             return ServiceStatus(name="redis", status="unhealthy", details=str(e)[:100]).model_dump()
 

@@ -3,7 +3,7 @@ CodeGuard AI - Admin Schemas
 Pydantic schemas for admin user management and system monitoring.
 """
 
-from typing import Optional, List
+from typing import Optional, List, Literal
 from datetime import datetime
 from pydantic import BaseModel, Field, EmailStr
 
@@ -21,7 +21,7 @@ class AdminUserResponse(BaseModel):
 
 
 class AdminUserUpdate(BaseModel):
-    role: Optional[str] = Field(None, description="New role: developer, instructor, admin")
+    role: Optional[Literal["developer", "instructor", "admin"]] = Field(None, description="New role: developer, instructor, admin")
     is_active: Optional[bool] = Field(None, description="Activate or deactivate user")
     full_name: Optional[str] = None
 

@@ -75,7 +75,11 @@ class PromptCache:
         self._fallback = LRUCache(max_size=256)
 
     def _get_client(self):
-        """Lazy-initialize Redis client. Returns None if Redis is unavailable."""
+        """Lazy-initialize synchronous Redis client for health_check only.
+
+        For all async operations, use the async methods which use
+        asyncio.to_thread to avoid blocking the event loop.
+        """
         if self._client is not None:
             return self._client
 

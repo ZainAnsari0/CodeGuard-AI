@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query'
 import { useAuthStore } from '../store/authStore'
-import { apiFetch } from '../lib/api'
+import { apiFetch, unwrapPaginated } from '../lib/api'
 
 interface ProjectItem {
   id: string
@@ -23,20 +23,22 @@ export function useDashboardData() {
 
   const projectsQuery = useQuery({
     queryKey: ['dashboard', 'projects'],
-    queryFn: () =>
-      apiFetch<{ items: ProjectItem[]; total: number }>(
-        '/api/v1/projects?skip=0&limit=100'
-      ),
+    queryFn: async () => {
+      const res = await fetch(`${import.meta.env.VITE_API_URL || 'http://localhost:8000'}/api/v1/projects?skip=0&limit=100`, { credentials: 'include' })
+      if (!res.ok) throw new Error('Failed to fetch projects')
+      return unwrapPaginated<{ items: ProjectItem[]; total: number }>(await res.json())
+    },
     enabled: isAuthenticated,
     staleTime: 2 * 60 * 1000,
   })
 
   const analysesQuery = useQuery({
     queryKey: ['dashboard', 'analyses'],
-    queryFn: () =>
-      apiFetch<{ items: AnalysisItem[]; total: number }>(
-        '/api/v1/analysis?skip=0&limit=10'
-      ),
+    queryFn: async () => {
+      const res = await fetch(`${import.meta.env.VITE_API_URL || 'http://localhost:8000'}/api/v1/analysis?skip=0&limit=10`, { credentials: 'include' })
+      if (!res.ok) throw new Error('Failed to fetch analyses')
+      return unwrapPaginated<{ items: AnalysisItem[]; total: number }>(await res.json())
+    },
     enabled: isAuthenticated,
     staleTime: 2 * 60 * 1000,
   })

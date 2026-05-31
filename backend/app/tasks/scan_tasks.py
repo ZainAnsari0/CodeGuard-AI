@@ -225,8 +225,16 @@ def _persist_findings(scan_id: str, file_ids: List[str], findings: List[Dict[str
         engine = _get_sync_engine()
 
         with engine.connect() as conn:
-            # Get code_file_id for the first file (simplified mapping)
-            file_id = file_ids[0] if file_ids else None
+            # Build file_path -> code_file_id mapping for correct file association
+            file_id_map = {}
+            for fid in file_ids:
+                file_result = conn.execute(
+                    text("SELECT id, file_path FROM code_files WHERE id = :fid"),
+                    {"fid": fid},
+                )
+                file_row = file_result.fetchone()
+                if file_row:
+                    file_id_map[file_row.file_path] = file_row.id
 
             # Get analysis project_id
             analysis_result = conn.execute(
@@ -248,6 +256,10 @@ def _persist_findings(scan_id: str, file_ids: List[str], findings: List[Dict[str
                 line_start = finding_data.get("line_number", finding_data.get("line_start", 0))
                 line_end = finding_data.get("line_end", line_start)
 
+                # Match finding to its source file using file_path
+                finding_file_path = finding_data.get("file_path", "")
+                code_file_id = file_id_map.get(finding_file_path, file_ids[0] if file_ids else None)
+
                 conn.execute(
                     text("""
                         INSERT INTO findings (id, code_file_id, project_id, analysis_id,
@@ -261,7 +273,7 @@ def _persist_findings(scan_id: str, file_ids: List[str], findings: List[Dict[str
                     """),
                     {
                         "id": finding_id,
-                        "code_file_id": file_id,
+                        "code_file_id": code_file_id,
                         "project_id": project_id,
                         "analysis_id": scan_id,
                         "analyzer_type": finding_data.get("analyzer_type", "sast"),

@@ -9,7 +9,10 @@ export { API_BASE_URL }
 
 /**
  * Unwrap a paginated or data-wrapped API response.
- * Handles both `{ data: T }` and `{ data: { items: T } }` patterns.
+ * Handles both `{ data: T }` and `{ data: { items: T, total, ... } }` patterns.
+ *
+ * By default, returns the items array for paginated responses.
+ * Use `unwrapPaginated()` to get the full data object with pagination metadata.
  */
 export function unwrap<T>(response: unknown): T {
   if (!response || typeof response !== 'object') {
@@ -23,6 +26,22 @@ export function unwrap<T>(response: unknown): T {
   // If data itself has an items field (paginated), return items
   if (typeof data === 'object' && data !== null && 'items' in (data as Record<string, unknown>)) {
     return (data as Record<string, unknown>).items as T
+  }
+  return data as T
+}
+
+/**
+ * Unwrap a paginated response, returning the full data object
+ * including pagination metadata (items, total, page, etc.).
+ */
+export function unwrapPaginated<T>(response: unknown): T {
+  if (!response || typeof response !== 'object') {
+    throw new Error('Invalid API response')
+  }
+  const obj = response as Record<string, unknown>
+  const data = obj.data
+  if (!data) {
+    throw new Error('No data in API response')
   }
   return data as T
 }

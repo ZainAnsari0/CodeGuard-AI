@@ -11,9 +11,11 @@ import asyncio
 from datetime import datetime, timezone
 from typing import List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import load_only
+from slowapi import Limiter
+from slowapi.util import get_remote_address
 
 from app.core.config import settings
 from app.core.exceptions import FileException, ValidationError
@@ -30,6 +32,7 @@ from app.models.analysis import Finding, FixSuggestion
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+limiter = Limiter(key_func=get_remote_address)
 
 UPLOAD_DIR = getattr(settings, "UPLOAD_DIR", "/tmp/codeguard_uploads")
 MAX_UPLOAD_SIZE = getattr(settings, "MAX_FILE_SIZE", 10 * 1024 * 1024)  # 10MB default
@@ -44,7 +47,9 @@ def _read_file_sync(path: str) -> str:
 
 
 @router.post("/upload", response_model=dict)
+@limiter.limit("5/minute")
 async def upload_scan_files(
+    request: Request,
     files: List[UploadFile] = File(...),
     language: Optional[str] = Form(None),
     db: AsyncSession = Depends(get_session),
@@ -160,7 +165,13 @@ async def upload_scan_files(
         await db.commit()
 
         from app.tasks.scan_tasks import run_scan_task
-        run_scan_task.delay(scan_id, [cf.id for cf in validated_files], current_user.id)
+        try:
+            run_scan_task.delay(scan_id, [cf.id for cf in validated_files], current_user.id)
+        except Exception as dispatch_err:
+            # Celery is down — clean up upload dir to prevent disk accumulation
+            logger.error(f"Failed to dispatch scan task: {dispatch_err}")
+            shutil.rmtree(upload_dir, ignore_errors=True)
+            raise HTTPException(status_code=503, detail="Scan service unavailable. Please try again later.")
 
         return {
             "success": True,
@@ -402,11 +413,10 @@ async def preview_fix(
 
     # Generate fix via AI
     from app.ai.fallback_chain import ai_chain
-    from app.ai.prompts.manager import PromptManager
-    from app.ai.parser import LLMOutputParser
+    from app.api.endpoints.ai import _prompt_manager, _output_parser
 
-    prompt_manager = PromptManager()
-    parser = LLMOutputParser()
+    prompt_manager = _prompt_manager
+    parser = _output_parser
 
     code_snippet = finding.code_snippet or ""
     language = analysis_metadata_language(finding)

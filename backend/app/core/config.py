@@ -136,6 +136,9 @@ class Settings(BaseSettings):
                 raise ValueError("JWT_SECRET_KEY must be set to a strong value (32+ chars) in production")
             if "*" in self.CORS_ORIGINS:
                 raise ValueError("CORS_ORIGINS must not contain '*' in production — specify explicit origins")
+            localhost_origins = [o for o in self.CORS_ORIGINS if "localhost" in o or "127.0.0.1" in o]
+            if localhost_origins:
+                raise ValueError(f"CORS_ORIGINS contains localhost origins in production: {localhost_origins}. Remove them and set explicit production origins.")
             if "codeguard_password" in self.DATABASE_URL or "codeguard_redis_pass" in self.REDIS_URL:
                 raise ValueError("Default database/redis credentials detected in production — set proper POSTGRES_PASSWORD and REDIS_PASSWORD")
         return self

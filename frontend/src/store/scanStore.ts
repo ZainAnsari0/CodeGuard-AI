@@ -6,7 +6,9 @@ export type ScanStatus = 'pending' | 'parsing' | 'analyzing' | 'completed' | 'fa
 
 export type { FindingType as Finding }
 
-const MAX_POLL_ATTEMPTS = 90 // ~3 minutes at 2s intervals
+// 10-minute scanner timeout at 2s intervals = 300 attempts, plus margin
+const MAX_POLL_ATTEMPTS = 300
+const POLL_INTERVAL_MS = 2000
 
 export interface ScanState {
   currentScanId: string | null
@@ -18,9 +20,10 @@ export interface ScanState {
   codeFiles: Record<string, string>
   isUploading: boolean
   error: string | null
+  _abortController: AbortController | null
 
   uploadFiles: (files: File[], language: string) => Promise<{ success: boolean; scanId?: string; error?: string }>
-  fetchScanStatus: (scanId: string) => Promise<void>
+  fetchScanStatus: (scanId: string, signal?: AbortSignal) => Promise<void>
   fetchScanResults: (scanId: string) => Promise<void>
   pollScanStatus: (scanId: string) => Promise<void>
   cancelPolling: () => void
@@ -38,6 +41,7 @@ export const useScanStore = create<ScanState>()((set, get) => ({
   codeFiles: {},
   isUploading: false,
   error: null,
+  _abortController: null,
 
   uploadFiles: async (files: File[], language: string) => {
     set({ isUploading: true, error: null })
@@ -53,13 +57,20 @@ export const useScanStore = create<ScanState>()((set, get) => ({
         body: formData,
       })
 
-      const raw = await response.json()
-
       if (!response.ok) {
-        const rawObj = raw as Record<string, unknown>
-        const errMsg = (rawObj.detail as string) || (rawObj.message as string) || 'Upload failed'
+        let errMsg = `Upload failed (HTTP ${response.status})`
+        try {
+          const raw = await response.json()
+          errMsg = (raw as Record<string, unknown>).detail as string || (raw as Record<string, unknown>).message as string || errMsg
+        } catch {
+          // Response wasn't JSON — use status-based message
+        }
         throw new Error(errMsg)
       }
+
+      const text = await response.text()
+      if (!text) throw new Error('Empty response from server')
+      const raw = JSON.parse(text)
 
       const data = unwrap<{ scan_id: string; file_count: number; status: string }>(raw)
 
@@ -80,12 +91,16 @@ export const useScanStore = create<ScanState>()((set, get) => ({
     }
   },
 
-  fetchScanStatus: async (scanId: string) => {
+  fetchScanStatus: async (scanId: string, signal?: AbortSignal) => {
     try {
-      const data = await unwrap<Record<string, unknown>>(
-        fetch(`${API_BASE_URL}/api/v1/scanner/${scanId}/status`, { credentials: 'include' })
-          .then(async (res) => { if (!res.ok) throw new Error('Status check failed'); return res.json() })
-      )
+      const response = await fetch(`${API_BASE_URL}/api/v1/scanner/${scanId}/status`, {
+        credentials: 'include',
+        signal,
+      })
+      if (!response.ok) throw new Error('Status check failed')
+      const text = await response.text()
+      if (!text) return
+      const data = unwrap<Record<string, unknown>>(JSON.parse(text))
 
       set({
         scanStatus: data.status as ScanStatus,
@@ -93,49 +108,67 @@ export const useScanStore = create<ScanState>()((set, get) => ({
         stage: (data.stage as string) || null,
         totalFiles: (data.total_files as number) || 0,
       })
-    } catch {
+    } catch (err) {
+      if (err instanceof DOMException && err.name === 'AbortError') return
       set({ error: 'Network error while checking scan status' })
     }
   },
 
   pollScanStatus: async (scanId: string) => {
+    // Cancel any previous polling
     get().cancelPolling()
+
+    const controller = new AbortController()
+    set({ _abortController: controller })
     let attempts = 0
-    const timers: ReturnType<typeof setTimeout>[] = []
 
     const poll = async () => {
-      if (attempts >= MAX_POLL_ATTEMPTS) {
-        set({ error: 'Scan is taking too long. Check back later.' })
+      if (attempts >= MAX_POLL_ATTEMPTS || controller.signal.aborted) {
+        if (!controller.signal.aborted) {
+          set({ error: 'Scan is taking too long. Check back later.' })
+        }
         return
       }
       attempts++
 
-      await get().fetchScanStatus(scanId)
+      await get().fetchScanStatus(scanId, controller.signal)
       const status = get().scanStatus
-      if (status && status !== 'completed' && status !== 'failed') {
-        const timer = setTimeout(poll, 2000)
-        timers.push(timer)
-        // Also store on instance for cleanup
-        ;(get() as Record<string, unknown>)._pollTimers = timers
+      if (status && status !== 'completed' && status !== 'failed' && !controller.signal.aborted) {
+        await new Promise<void>((resolve) => {
+          const timer = setTimeout(resolve, POLL_INTERVAL_MS)
+          // Store timer so cancelPolling can clear it
+          const state = get() as Record<string, unknown>
+          state._currentTimer = timer
+        })
+        await poll()
       }
     }
-    ;(get() as Record<string, unknown>)._pollTimers = timers
+
     await poll()
   },
 
   cancelPolling: () => {
-    const timers = (get() as Record<string, unknown>)._pollTimers as ReturnType<typeof setTimeout>[] | undefined
-    if (timers) {
-      timers.forEach(clearTimeout)
+    const state = get() as Record<string, unknown>
+    // Abort any in-flight fetch
+    if (state._abortController && (state._abortController as AbortController)) {
+      ;(state._abortController as AbortController).abort()
     }
+    // Clear any pending timer
+    if (state._currentTimer && typeof state._currentTimer === 'number') {
+      clearTimeout(state._currentTimer as ReturnType<typeof setTimeout>)
+    }
+    set({ _abortController: null })
   },
 
   fetchScanResults: async (scanId: string) => {
     try {
-      const data = await unwrap<Record<string, unknown>>(
-        fetch(`${API_BASE_URL}/api/v1/scanner/${scanId}/results`, { credentials: 'include' })
-          .then(async (res) => { if (!res.ok) throw new Error('Failed to fetch results'); return res.json() })
-      )
+      const response = await fetch(`${API_BASE_URL}/api/v1/scanner/${scanId}/results`, {
+        credentials: 'include',
+      })
+      if (!response.ok) throw new Error('Failed to fetch results')
+      const text = await response.text()
+      if (!text) return
+      const data = unwrap<Record<string, unknown>>(JSON.parse(text))
 
       set({
         findings: (data.findings as FindingType[]) || [],
@@ -160,6 +193,7 @@ export const useScanStore = create<ScanState>()((set, get) => ({
       codeFiles: {},
       isUploading: false,
       error: null,
+      _abortController: null,
     })
   },
 

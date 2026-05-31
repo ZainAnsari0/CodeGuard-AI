@@ -141,12 +141,12 @@ async def login(
     )
     user = result.scalar_one_or_none()
 
-    # Check account lockout
+    # Check account lockout — use generic message to prevent email enumeration
     if user and is_account_locked(user):
-        remaining = get_lockout_remaining_minutes(user)
-        raise UnauthorizedException(
-            message=f"Account is temporarily locked. Try again in {remaining} minutes."
-        )
+        # Increment failed attempt counter even during lockout (don't reveal lock status)
+        handle_failed_login(user)
+        await db.commit()
+        raise UnauthorizedException(message="Invalid email or password")
 
     if not user or not verify_password(form_data.password, user.hashed_password):
         if user:
@@ -154,9 +154,7 @@ async def login(
             await db.commit()
 
             if lockout_info["locked"]:
-                raise UnauthorizedException(
-                    message=f"Account locked due to too many failed attempts. Try again in {settings.LOCKOUT_DURATION_MINUTES} minutes."
-                )
+                raise UnauthorizedException(message="Invalid email or password")
 
         raise UnauthorizedException(message="Invalid email or password")
 
