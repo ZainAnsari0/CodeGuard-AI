@@ -24,12 +24,14 @@ from app.db.session import engine
 from sqlmodel import SQLModel
 from app.api.routes import api_router
 from app.core.exceptions import (
+    DomainError,
+    # Backward-compatible aliases
     AppException,
     NotFoundException,
     ValidationError,
     UnauthorizedException,
     ForbiddenException,
-    RateLimitException
+    RateLimitException,
 )
 
 # Import all models so SQLModel.metadata picks them up
@@ -133,6 +135,18 @@ async def add_process_time_header(request: Request, call_next):
         response.headers["X-Process-Time"] = f"{process_time:.4f}s"
     logger.debug(f"{request.method} {request.url.path} - {process_time:.4f}s")
     return response
+
+
+# ─── New Enterprise Middleware ──────────────────────────────────────────
+from app.api.middleware import (
+    DomainExceptionMiddleware,
+    RequestIdMiddleware,
+    SecurityHeadersMiddleware,
+)
+
+app.add_middleware(SecurityHeadersMiddleware)
+app.add_middleware(RequestIdMiddleware)
+app.add_middleware(DomainExceptionMiddleware)
 
 
 # Exception handlers — standardized error response format

@@ -1,6 +1,6 @@
-"""
-CodeGuard AI - CodeFile Model
-Database model for code file storage.
+"""CodeGuard AI - CodeFile Model
+
+Database model ONLY. Schemas (Create/Update/Response) live in app/schemas/code_file.py.
 """
 
 from typing import Optional, List
@@ -11,7 +11,7 @@ import uuid
 
 
 class CodeFileBase(SQLModel):
-    """Base code file model with common fields."""
+    """Base code file fields shared between model and schemas."""
     project_id: Optional[str] = Field(
         default=None,
         sa_column=Column(
@@ -106,45 +106,3 @@ class CodeFile(CodeFileBase, table=True):
         back_populates="code_file",
         sa_relationship_kwargs={"cascade": "all, delete-orphan"}
     )
-
-
-class CodeFileCreate(SQLModel):
-    """Schema for code file creation."""
-    project_id: Optional[uuid.UUID] = None
-    file_path: str
-    file_name: str
-    file_extension: str
-    content: Optional[str] = None
-    language: Optional[str] = None
-    line_count: int = 0
-    last_commit_hash: Optional[str] = None
-    last_commit_date: Optional[datetime] = None
-    file_metadata: Optional[dict] = None
-
-
-class CodeFileUpdate(SQLModel):
-    """Schema for code file updates."""
-    content: Optional[str] = None
-    file_size: Optional[int] = None
-    language: Optional[str] = None
-    line_count: Optional[int] = None
-    last_commit_hash: Optional[str] = None
-    last_commit_date: Optional[datetime] = None
-    file_metadata: Optional[dict] = None
-
-
-class CodeFileResponse(SQLModel):
-    """Schema for code file response."""
-    id: uuid.UUID
-    project_id: uuid.UUID
-    file_path: str
-    file_name: str
-    file_extension: str
-    file_size: int
-    language: Optional[str] = None
-    line_count: int
-    last_commit_hash: Optional[str] = None
-    last_commit_date: Optional[datetime] = None
-    file_metadata: Optional[dict] = None
-    created_at: Optional[datetime] = None
-    updated_at: Optional[datetime] = None

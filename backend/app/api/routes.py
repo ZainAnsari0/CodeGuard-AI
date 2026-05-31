@@ -5,11 +5,12 @@ Main router for all API endpoints.
 
 from fastapi import APIRouter
 
-from app.api.endpoints import auth, users, projects, code_files, analysis, ai, scanner, instructor, admin, kb, share, guest, rescan
+from app.api.endpoints import auth, users, projects, code_files, analysis, ai, scanner, instructor, admin, kb, share, guest, rescan, health
 
 api_router = APIRouter()
 
 # Include sub-routers
+api_router.include_router(health.router, tags=["health"])
 api_router.include_router(auth.router, prefix="/auth", tags=["authentication"])
 api_router.include_router(users.router, prefix="/users", tags=["users"])
 api_router.include_router(projects.router, prefix="/projects", tags=["projects"])

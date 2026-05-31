@@ -1,6 +1,6 @@
-"""
-CodeGuard AI - Project Model
-Database model for project management.
+"""CodeGuard AI - Project Model
+
+Database model ONLY. Schemas (Create/Update/Response) live in app/schemas/project.py.
 """
 
 from typing import Optional, List
@@ -11,7 +11,7 @@ import uuid
 
 
 class ProjectBase(SQLModel):
-    """Base project model with common fields."""
+    """Base project fields shared between model and schemas."""
     name: str = Field(
         sa_column=Column(String, nullable=False),
         description="Project name"
@@ -41,7 +41,7 @@ class ProjectBase(SQLModel):
 class Project(ProjectBase, table=True):
     """Project database model."""
     __tablename__ = "projects"
-    
+
     id: Optional[str] = Field(
         default_factory=lambda: str(uuid.uuid4()),
         sa_column=Column(
@@ -52,7 +52,7 @@ class Project(ProjectBase, table=True):
         ),
         description="Unique identifier"
     )
-    
+
     user_id: Optional[str] = Field(
         sa_column=Column(
             String(36),
@@ -62,19 +62,19 @@ class Project(ProjectBase, table=True):
         ),
         description="Owner user ID"
     )
-    
+
     created_at: Optional[datetime] = Field(
         default_factory=lambda: datetime.now(timezone.utc),
         sa_column=Column(DateTime, server_default=func.now()),
         description="Created timestamp"
     )
-    
+
     updated_at: Optional[datetime] = Field(
         default_factory=lambda: datetime.now(timezone.utc),
         sa_column=Column(DateTime, onupdate=func.now()),
         description="Updated timestamp"
     )
-    
+
     # Relationships
     user: "User" = Relationship(
         back_populates="projects"
@@ -87,33 +87,3 @@ class Project(ProjectBase, table=True):
         back_populates="project",
         sa_relationship_kwargs={"cascade": "all, delete-orphan"}
     )
-
-
-class ProjectCreate(SQLModel):
-    """Schema for project creation."""
-    name: str
-    description: Optional[str] = None
-    repository_url: Optional[str] = None
-    branch: str = "main"
-    config: Optional[dict] = None
-
-
-class ProjectUpdate(SQLModel):
-    """Schema for project updates."""
-    name: Optional[str] = None
-    description: Optional[str] = None
-    repository_url: Optional[str] = None
-    branch: Optional[str] = None
-    config: Optional[dict] = None
-
-
-class ProjectResponse(SQLModel):
-    """Schema for project response."""
-    id: uuid.UUID
-    name: str
-    description: Optional[str] = None
-    repository_url: Optional[str] = None
-    branch: str
-    config: Optional[dict] = None
-    created_at: Optional[datetime] = None
-    updated_at: Optional[datetime] = None
