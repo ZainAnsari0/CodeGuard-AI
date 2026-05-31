@@ -47,6 +47,10 @@ async def lifespan(app: FastAPI):
     """Lifespan event handler for startup and shutdown events."""
     logger.info("Starting up application...")
 
+    # Run production readiness checks first (fail fast before touching DB)
+    from app.core.startup_checks import run_startup_checks
+    await run_startup_checks()
+
     # Validate JWT keys for RS256 mode
     from app.services.auth import validate_jwt_keys_on_startup
     if not validate_jwt_keys_on_startup():
@@ -57,10 +61,6 @@ async def lifespan(app: FastAPI):
     from app.infrastructure.database import engine
     from app.db.migrations import ensure_schema
     await ensure_schema(engine)
-
-    # Run production readiness checks
-    from app.core.startup_checks import run_startup_checks
-    await run_startup_checks()
 
     logger.info("Application startup complete")
     yield

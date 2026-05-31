@@ -65,7 +65,7 @@ class HTTPSEnforcementMiddleware(BaseHTTPMiddleware):
     load balancers.
     """
 
-    EXEMPT_PATHS = {"/health", "/ready"}
+    EXEMPT_PATHS = {"/health", "/ready", "/api/v1/health", "/api/v1/ready", "/metrics"}
 
     async def dispatch(self, request: Request, call_next):
         # Only enforce in production
