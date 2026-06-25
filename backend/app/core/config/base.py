@@ -9,7 +9,7 @@ Domain-specific settings are in separate modules:
 """
 
 import os
-from typing import List, Optional
+from typing import List, Optional, Union
 from pydantic_settings import BaseSettings
 from pydantic import field_validator, model_validator
 
@@ -70,8 +70,8 @@ class SecuritySettings(BaseSettings):
     JWT_PUBLIC_KEY_PATH: Optional[str] = None
     MAX_LOGIN_ATTEMPTS: int = 5
     LOCKOUT_DURATION_MINUTES: int = 15
-    ALLOWED_HOSTS: List[str] = ["*"]
-    CORS_ORIGINS: List[str] = [
+    ALLOWED_HOSTS: Union[List[str], str] = ["*"]
+    CORS_ORIGINS: Union[List[str], str] = [
         "http://localhost:5173", "http://localhost:3000",
         "http://127.0.0.1:5173", "http://127.0.0.1:3000",
     ]
