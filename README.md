@@ -24,7 +24,7 @@ CodeGuard AI is a privacy-first, AI-augmented static application security testin
 | Backend    | FastAPI, SQLModel, PostgreSQL, Redis, Celery         |
 | AI         | Multi-provider fallback chain with local LLM support |
 | Scanning   | Python AST, JS Acorn parser (in-process)            |
-| Infra      | Nginx, Prometheus, Grafana, systemd                   |
+| Infra      | Render (PaaS), Nginx, Prometheus, Grafana             |
 
 ## Quick Start
 
@@ -39,7 +39,7 @@ CodeGuard AI is a privacy-first, AI-augmented static application security testin
 
 ```bash
 # Clone and configure
-git clone <repo-url> && cd FYP
+git clone https://github.com/ZainAnsari0/CodeGuard-AI.git && cd CodeGuard-AI
 cp .env.example .env
 # Edit .env with your API keys (OPENAI_API_KEY, GROQ_API_KEY, etc.)
 
@@ -63,25 +63,16 @@ npm install
 npm run dev    # http://localhost:5173
 ```
 
-### Production Deployment
+### Production Deployment (Render)
 
-```bash
-# Configure production environment
-cp .env.production .env.production.local
-# Edit ALL CHANGE_ME placeholders
+This project is configured for deployment on [Render](https://render.com) using the included `render.yaml` Blueprint.
 
-# Generate JWT keys
-bash backend/scripts/setup-tls.sh production
+1. Push code to GitHub
+2. Connect your GitHub repo to Render
+3. Configure environment variables in the Render dashboard (see `.env.example`)
+4. Render auto-deploys backend (FastAPI) and frontend (static site) services
 
-# Build frontend
-cd frontend && npm run build
-
-# Start services via systemd
-sudo systemctl start codeguard-api
-sudo systemctl start codeguard-celery
-```
-
-See [docs/deployment.md](docs/deployment.md) for full deployment documentation.
+See [render.yaml](render.yaml) for service definitions and [docs/deployment.md](docs/deployment.md) for full documentation.
 
 ## Testing
 
