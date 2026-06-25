@@ -54,7 +54,8 @@ def upgrade() -> None:
         batch_op.alter_column('confidence',
                    existing_type=sa.VARCHAR(),
                    type_=sa.Float(),
-                   existing_nullable=True)
+                   existing_nullable=True,
+                   postgresql_using="confidence::double precision")
 
     # --- users ---
     with op.batch_alter_table('users', schema=None) as batch_op:
@@ -79,7 +80,8 @@ def downgrade() -> None:
         batch_op.alter_column('confidence',
                    existing_type=sa.Float(),
                    type_=sa.VARCHAR(),
-                   existing_nullable=True)
+                   existing_nullable=True,
+                   postgresql_using="confidence::varchar")
 
     # --- findings ---
     with op.batch_alter_table('findings', schema=None) as batch_op:
