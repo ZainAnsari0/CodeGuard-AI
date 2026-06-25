@@ -47,9 +47,11 @@ from app.core.rate_limit import limiter
 router = APIRouter()
 
 
-def set_auth_cookies(response: Response, access_token: str, refresh_token: str):
+def set_auth_cookies(request: Request, response: Response, access_token: str, refresh_token: str):
     """Set httpOnly secure cookies for auth tokens."""
-    secure = settings.ENVIRONMENT == "production"
+    host = request.headers.get("host", "")
+    is_localhost = "localhost" in host or "127.0.0.1" in host
+    secure = request.url.scheme == "https" or not is_localhost
     samesite = "none" if secure else "lax"
     response.set_cookie(
         key="access_token",
@@ -111,7 +113,7 @@ async def register(
     access_token = create_access_token(user.id, extra_claims={"role": user.role})
     refresh_token = create_refresh_token(user.id)
 
-    set_auth_cookies(response, access_token, refresh_token)
+    set_auth_cookies(request, response, access_token, refresh_token)
 
     return ResponseSchema(
         message="User registered successfully",
@@ -167,7 +169,7 @@ async def login(
     access_token = create_access_token(user.id, extra_claims={"role": user.role})
     refresh_token = create_refresh_token(user.id)
 
-    set_auth_cookies(response, access_token, refresh_token)
+    set_auth_cookies(request, response, access_token, refresh_token)
 
     user.last_login = datetime.now(timezone.utc)
     await db.commit()
@@ -232,7 +234,7 @@ async def refresh_token(
     # Revoke the old refresh token to prevent replay
     await revoke_refresh_token(rt)
 
-    set_auth_cookies(response, new_access_token, new_refresh_token)
+    set_auth_cookies(request, response, new_access_token, new_refresh_token)
 
     return ResponseSchema(
         message="Token refreshed successfully",
@@ -314,7 +316,9 @@ async def logout(
         await revoke_access_token(at)
 
     # Clear httpOnly cookies
-    secure = settings.ENVIRONMENT == "production"
+    host = request.headers.get("host", "")
+    is_localhost = "localhost" in host or "127.0.0.1" in host
+    secure = request.url.scheme == "https" or not is_localhost
     samesite = "none" if secure else "lax"
     response.delete_cookie(key="access_token", path="/", secure=secure, samesite=samesite)
     response.delete_cookie(key="refresh_token", path="/api/v1/auth", secure=secure, samesite=samesite)
