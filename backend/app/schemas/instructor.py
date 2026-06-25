@@ -39,6 +39,22 @@ class EnrollmentCreate(BaseModel):
     join_code: str = Field(..., min_length=1, description="Class join code")
 
 
+class JoinByCodeRequest(BaseModel):
+    join_code: str = Field(..., min_length=1, description="Class join code")
+
+
+class EnrolledClassResponse(BaseModel):
+    id: str
+    name: str
+    description: Optional[str] = None
+    join_code: str
+    is_active: bool
+    instructor_name: Optional[str] = None
+    instructor_email: Optional[str] = None
+    enrolled_at: Optional[datetime] = None
+    student_count: int = 0
+
+
 class EnrollmentResponse(BaseModel):
     id: str
     class_id: str

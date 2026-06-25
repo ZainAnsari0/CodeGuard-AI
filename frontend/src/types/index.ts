@@ -50,6 +50,9 @@ export interface FixSuggestion {
   code_before: string | null
   code_after: string | null
   language: string
+  ast_validated?: boolean | null
+  validation_warnings?: string[] | null
+  confidence?: number | null
 }
 
 export interface Finding {
@@ -68,6 +71,8 @@ export interface Finding {
   status: string
   confidence: number | null
   fix_suggestions: FixSuggestion[]
+  explanation?: AiExplanationResult | null
+  explanation_provider?: string | null
 }
 
 export interface ScanResult {
@@ -92,6 +97,23 @@ export interface ScanHistoryItem {
   completed_at: string | null
   summary: ScanResult['summary'] | null
   created_at: string | null
+}
+
+export interface AnalysisSummary {
+  total_findings: number
+  by_severity: Record<FindingSeverity | string, number>
+  by_type?: Record<string, number>
+  file_count?: number
+}
+
+export interface RecentAnalysis {
+  id: string
+  status: string
+  branch: string
+  scan_name?: string | null
+  created_at: string | null
+  completed_at: string | null
+  summary: AnalysisSummary | null
 }
 
 export interface AiExplanationRequest {
@@ -175,6 +197,18 @@ export interface ClassMetrics {
   findings_by_type: Record<string, number>
   avg_findings_per_student: number
   top_vulnerability_types: Array<{ type: string; count: number }>
+}
+
+export interface EnrolledClass {
+  id: string
+  name: string
+  description: string | null
+  join_code: string
+  is_active: boolean
+  instructor_name: string | null
+  instructor_email: string | null
+  enrolled_at: string | null
+  student_count: number
 }
 
 // --- Admin types ---

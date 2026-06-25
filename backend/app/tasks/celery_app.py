@@ -19,6 +19,10 @@ celery_app = Celery(
     "codeguard_ai",
     broker=settings.REDIS_URL,
     backend=settings.REDIS_URL,
+    include=[
+        "app.tasks.scan_tasks",
+        "app.tasks.auth_tasks",
+    ],
 )
 
 celery_app.conf.update(
@@ -33,6 +37,3 @@ celery_app.conf.update(
     worker_max_tasks_per_child=100,
     worker_prefetch_multiplier=1,
 )
-
-# Auto-discover tasks
-celery_app.autodiscover_tasks(["app.tasks"])

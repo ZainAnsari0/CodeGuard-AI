@@ -3,6 +3,7 @@ CodeGuard AI - Analysis API Endpoints
 CRUD operations for security analysis management.
 """
 
+import json
 from typing import Any
 from uuid import uuid4
 
@@ -53,8 +54,15 @@ async def list_analyses(
 
     if current_user.role != UserRole.ADMIN:
         user_project_ids = select(Project.id).where(Project.user_id == current_user.id)
-        query = query.where(Analysis.project_id.in_(user_project_ids))
-        count_query = count_query.where(Analysis.project_id.in_(user_project_ids))
+        # Include analyses linked to user's projects OR standalone scans created by the user
+        query = query.where(
+            (Analysis.project_id.in_(user_project_ids)) |
+            ((Analysis.project_id.is_(None)) & (Analysis.user_id == str(current_user.id)))
+        )
+        count_query = count_query.where(
+            (Analysis.project_id.in_(user_project_ids)) |
+            ((Analysis.project_id.is_(None)) & (Analysis.user_id == str(current_user.id)))
+        )
 
     if project_id:
         query = query.where(Analysis.project_id == project_id)
@@ -162,6 +170,32 @@ async def get_analysis_findings(
 
     findings_data = []
     for f in findings:
+        # Serialize fix_suggestions (loaded via selectinload but not previously returned)
+        fix_suggestions_data = []
+        for fs in f.fix_suggestions:
+            fix_suggestions_data.append({
+                "id": str(fs.id),
+                "title": fs.title,
+                "description": fs.description,
+                "priority": fs.priority,
+                "code_before": fs.code_before,
+                "code_after": fs.code_after,
+                "language": fs.language,
+                "ast_validated": fs.ast_validated,
+                "validation_warnings": fs.validation_warnings if isinstance(fs.validation_warnings, list) else (
+                    json.loads(fs.validation_warnings) if isinstance(fs.validation_warnings, str) else None
+                ) if fs.validation_warnings else None,
+                "confidence": float(fs.confidence) if fs.confidence else None,
+            })
+
+        # Parse explanation JSON field
+        explanation_parsed = None
+        if f.explanation:
+            try:
+                explanation_parsed = json.loads(f.explanation) if isinstance(f.explanation, str) else f.explanation
+            except (json.JSONDecodeError, TypeError):
+                explanation_parsed = None
+
         findings_data.append({
             "id": str(f.id),
             "analyzer_type": f.analyzer_type,
@@ -177,6 +211,9 @@ async def get_analysis_findings(
             "code_snippet": f.code_snippet,
             "status": f.status,
             "confidence": f.confidence,
+            "fix_suggestions": fix_suggestions_data,
+            "explanation": explanation_parsed,
+            "explanation_provider": f.explanation_provider,
         })
 
     return ResponseSchema(message="Findings retrieved", data={"findings": findings_data, "total": len(findings_data)})

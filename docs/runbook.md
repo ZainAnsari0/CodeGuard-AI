@@ -5,7 +5,15 @@
 ### Check All Services
 
 ```bash
-docker compose ps
+# Check API health
+curl -f http://localhost:8000/health
+
+# Check API readiness
+curl -f http://localhost:8000/ready
+
+# Check process status
+sudo systemctl status codeguard-api
+sudo systemctl status codeguard-celery
 ```
 
 ### Individual Health Checks
@@ -14,14 +22,17 @@ docker compose ps
 # API health
 curl -f http://localhost:8000/health
 
-# Frontend health (production)
+# Frontend health (production, via nginx)
 curl -f https://localhost/health
 
 # PostgreSQL
-docker exec codeguard_postgres pg_isready -U codeguard_user -d codeguard
+psql -h localhost -U codeguard_user -d codeguard -c "SELECT 1;"
 
 # Redis
-docker exec codeguard_redis redis-cli ping
+redis-cli -h localhost ping
+
+# Workspace health (checks temp directory is writable)
+curl -f http://localhost:8000/api/v1/scanner/workspace-health
 ```
 
 ## Restarting Services
@@ -29,38 +40,45 @@ docker exec codeguard_redis redis-cli ping
 ### Restart Single Service
 
 ```bash
-# Development
-docker compose restart api
+# API
+sudo systemctl restart codeguard-api
 
-# Production
-docker compose -f docker-compose.yml -f docker-compose.prod.yml restart api
+# Celery worker
+sudo systemctl restart codeguard-celery
+
+# Celery beat (scheduler)
+sudo systemctl restart codeguard-celery-beat
+
+# Frontend (nginx)
+sudo systemctl reload nginx
 ```
 
 ### Restart All Services
 
 ```bash
-docker compose -f docker-compose.yml -f docker-compose.prod.yml restart
-```
-
-### Rebuild and Restart
-
-```bash
-docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
+sudo systemctl restart codeguard-api codeguard-celery codeguard-celery-beat nginx
 ```
 
 ## Viewing Logs
 
 ```bash
-# All services
-docker compose logs -f
+# API logs
+sudo journalctl -u codeguard-api -f
 
-# Specific service
-docker compose logs -f api
-docker compose logs -f celery
-docker compose logs -f frontend
+# Celery worker logs
+sudo journalctl -u codeguard-celery -f
+
+# Celery beat logs
+sudo journalctl -u codeguard-celery-beat -f
+
+# Nginx access logs
+sudo tail -f /var/log/nginx/access.log
+
+# Nginx error logs
+sudo tail -f /var/log/nginx/error.log
 
 # Last 100 lines
-docker compose logs --tail 100 api
+sudo journalctl -u codeguard-api -n 100
 ```
 
 ## Database Operations
@@ -68,59 +86,69 @@ docker compose logs --tail 100 api
 ### Connect to PostgreSQL
 
 ```bash
-docker exec -it codeguard_postgres psql -U codeguard_user -d codeguard
+psql -h localhost -U codeguard_user -d codeguard
 ```
 
 ### Backup
 
 ```bash
-bash backend/scripts/backup-db.sh
+bash deploy/db-backup.sh
 ```
 
 ### Restore
 
 ```bash
-bash backend/scripts/restore-db.sh backups/codeguard_codeguard_20260528_020000.sql.gz
+bash deploy/db-restore.sh backups/codeguard_codeguard_20260528_020000.sql.gz
 ```
 
 ### Run Migrations
 
 ```bash
-docker exec codeguard_api alembic upgrade head
+cd backend
+source venv/bin/activate
+alembic upgrade head
 ```
 
 ### Check Migration Status
 
 ```bash
-docker exec codeguard_api alembic current
+cd backend
+source venv/bin/activate
+alembic current
 ```
 
 ## Scaling Workers
 
 ### Increase Celery Concurrency
 
-Edit `docker-compose.prod.yml` and change the celery worker concurrency:
+Edit the celery service configuration:
 
-```yaml
-celery:
-  command: celery -A app.tasks.celery_app worker --loglevel=info --concurrency=8
+```bash
+sudo systemctl edit codeguard-celery
+```
+
+Add or modify:
+
+```ini
+[Service]
+ExecStart=/opt/codeguard/backend/venv/bin/celery -A app.tasks.celery_app worker --loglevel=info --concurrency=8
 ```
 
 Then restart:
 
 ```bash
-docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d celery
+sudo systemctl restart codeguard-celery
 ```
 
 ## Monitoring
 
 ### Grafana Dashboard
 
-Access at: http://localhost:3001
+Access at: http://localhost:3001 (or your configured Grafana URL)
 
 Default credentials (from .env.production):
 - Username: admin
-- Password: (from GRAFANA_ADMIN_PASSWORD)
+- Password: (from GRAFANA_ADMIN_PASSWORD, if configured)
 
 ### Prometheus Metrics
 
@@ -130,47 +158,61 @@ Key queries:
 - Request rate: `rate(http_requests_total[5m])`
 - p95 latency: `histogram_quantile(0.95, rate(http_request_duration_seconds_bucket[5m]))`
 - Error rate: `rate(http_requests_total{status=~"5.."}[5m])`
+- Active scans: `codeguard_active_scans`
+- Workspace disk usage: `codeguard_workspace_disk_bytes`
 
 ## Common Incidents
 
 ### API Returns 502/503
 
-1. Check if API container is running: `docker compose ps api`
-2. Check API logs: `docker compose logs --tail 50 api`
-3. Check database connectivity: `docker exec codeguard_postgres pg_isready`
-4. Restart API: `docker compose restart api`
+1. Check if API process is running: `sudo systemctl status codeguard-api`
+2. Check API logs: `sudo journalctl -u codeguard-api -n 50`
+3. Check database connectivity: `psql -h localhost -U codeguard_user -d codeguard -c "SELECT 1;"`
+4. Restart API: `sudo systemctl restart codeguard-api`
 
 ### High Memory Usage
 
-1. Check resource usage: `docker stats --no-stream`
-2. Identify the container with high usage
+1. Check resource usage: `top -o %MEM | head -20`
+2. Identify the process with high usage
 3. Check for memory leaks in logs
-4. Restart the affected container
-5. If persistent, increase memory limit in `docker-compose.prod.yml`
+4. Restart the affected service
+5. If persistent, increase system resources or reduce MAX_CONCURRENT_SCANS
 
 ### Celery Queue Backlog
 
-1. Check Celery logs: `docker compose logs --tail 100 celery`
-2. Check active tasks in Redis: `docker exec codeguard_redis redis-cli LLEN celery`
+1. Check Celery logs: `sudo journalctl -u codeguard-celery -n 100`
+2. Check active tasks in Redis: `redis-cli LLEN celery`
 3. Increase worker concurrency (see Scaling Workers above)
-4. Check if scanner containers are stuck: `docker ps | grep codeguard-scanner`
+4. Check for stuck scan processes
 
 ### Database Connection Pool Exhaustion
 
-1. Check active connections: `docker exec codeguard_postgres psql -U codeguard_user -d codeguard -c "SELECT count(*) FROM pg_stat_activity;"`
-2. Check max connections: `docker exec codeguard_postgres psql -U codeguard_user -d codeguard -c "SHOW max_connections;"`
-3. Restart API to reset connection pool: `docker compose restart api`
+1. Check active connections: `psql -h localhost -U codeguard_user -d codeguard -c "SELECT count(*) FROM pg_stat_activity;"`
+2. Check max connections: `psql -h localhost -U codeguard_user -d codeguard -c "SHOW max_connections;"`
+3. Restart API to reset connection pool: `sudo systemctl restart codeguard-api`
 
 ### TLS Certificate Expiry
 
-1. Check cert expiry: `openssl x509 -in certs/tls_cert.pem -noout -dates`
-2. Renew: `bash backend/scripts/renew-tls.sh`
-3. For self-signed (dev): `bash backend/scripts/setup-tls.sh self-signed`
+1. Check cert expiry: `openssl x509 -in certs/fullchain.pem -noout -dates`
+2. Renew (Let's Encrypt): `bash deploy/cert-manager.sh renew`
+3. Self-signed (dev): `bash backend/scripts/setup-tls.sh self-signed`
+
+### Stale Workspace Cleanup
+
+If temporary workspaces accumulate:
+
+```bash
+# Check workspace disk usage
+du -sh /tmp/codeguard_uploads/
+
+# Clean stale workspaces (older than 1 hour)
+make clean-workspaces
+```
 
 ## Rollback a Deployment
 
 ```bash
-bash backend/scripts/deploy.sh production --rollback
+bash deploy/deploy.sh --rollback
 ```
 
 Or manually:
@@ -181,5 +223,5 @@ git tag --sort=-version:refname | head -5
 
 # Checkout and deploy
 git checkout <previous-tag>
-docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
+bash deploy/deploy.sh
 ```

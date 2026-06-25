@@ -20,6 +20,7 @@ from app.schemas.instructor import (
     ClassCreate, ClassUpdate, ClassResponse,
     EnrollmentCreate, EnrollmentResponse,
     ClassMetricsResponse,
+    JoinByCodeRequest, EnrolledClassResponse,
 )
 from app.api.dependencies import get_current_user, require_role
 from app.schemas.auth import UserRole
@@ -96,6 +97,146 @@ async def list_classes(
 
     return {"success": True, "data": class_list}
 
+
+# --- Developer-facing class endpoints ---
+# Must be defined BEFORE /classes/{class_id} routes
+# to avoid path parameter conflicts with "join" and "mine".
+
+@router.post("/classes/join", response_model=dict)
+async def join_class_by_code(
+    data: JoinByCodeRequest,
+    db: AsyncSession = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+):
+    """Join a class using a join code (available to all authenticated users)."""
+    # Look up the class by join code
+    stmt = select(Class_).where(Class_.join_code == data.join_code, Class_.is_active == True)
+    result = await db.execute(stmt)
+    cls = result.scalar_one_or_none()
+
+    if not cls:
+        raise HTTPException(status_code=404, detail="Invalid join code. No active class found.")
+
+    # Check if already enrolled
+    existing = await db.execute(
+        select(Enrollment).where(
+            Enrollment.class_id == cls.id,
+            Enrollment.student_id == current_user.id,
+        )
+    )
+    existing_enrollment = existing.scalar_one_or_none()
+    if existing_enrollment:
+        if existing_enrollment.status == "active":
+            raise HTTPException(status_code=400, detail="You are already enrolled in this class.")
+        # Re-activate dropped enrollment
+        existing_enrollment.status = "active"
+        await db.commit()
+        await db.refresh(existing_enrollment)
+        return {
+            "success": True,
+            "message": "Re-enrolled successfully",
+            "data": {
+                "class_id": cls.id,
+                "class_name": cls.name,
+                "status": "active",
+                "enrolled_at": existing_enrollment.enrolled_at.isoformat() if existing_enrollment.enrolled_at else None,
+            },
+        }
+
+    # Create new enrollment
+    enrollment = Enrollment(
+        id=str(uuid.uuid4()),
+        class_id=cls.id,
+        student_id=current_user.id,
+        status="active",
+    )
+    db.add(enrollment)
+    await db.commit()
+    await db.refresh(enrollment)
+
+    return {
+        "success": True,
+        "message": "Joined class successfully",
+        "data": {
+            "class_id": cls.id,
+            "class_name": cls.name,
+            "status": "active",
+            "enrolled_at": enrollment.enrolled_at.isoformat() if enrollment.enrolled_at else None,
+        },
+    }
+
+
+@router.get("/classes/mine", response_model=dict)
+async def list_my_classes(
+    db: AsyncSession = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+):
+    """List classes the current developer has joined."""
+    # Subquery for student count per class
+    student_count_sq = (
+        select(func.count().label("student_count"))
+        .where(Enrollment.class_id == Class_.id, Enrollment.status == "active")
+        .correlate(Class_)
+        .scalar_subquery()
+    )
+
+    # Query enrolled classes with class details and instructor info
+    stmt = (
+        select(Class_, Enrollment, User, student_count_sq.label("student_count"))
+        .join(Enrollment, Enrollment.class_id == Class_.id)
+        .join(User, Class_.instructor_id == User.id)
+        .where(
+            Enrollment.student_id == current_user.id,
+            Enrollment.status == "active",
+            Class_.is_active == True,
+        )
+    )
+    result = await db.execute(stmt)
+    rows = result.all()
+
+    enrolled_classes = [
+        EnrolledClassResponse(
+            id=cls.id,
+            name=cls.name,
+            description=cls.description,
+            join_code=cls.join_code,
+            is_active=cls.is_active,
+            instructor_name=instructor.full_name,
+            instructor_email=instructor.email,
+            enrolled_at=enrollment.enrolled_at,
+            student_count=count or 0,
+        ).model_dump()
+        for cls, enrollment, instructor, count in rows
+    ]
+
+    return {"success": True, "data": enrolled_classes}
+
+
+@router.delete("/classes/{class_id}/leave", response_model=dict)
+async def leave_class(
+    class_id: str,
+    db: AsyncSession = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+):
+    """Leave a class (developer self-service)."""
+    stmt = select(Enrollment).where(
+        Enrollment.class_id == class_id,
+        Enrollment.student_id == current_user.id,
+        Enrollment.status == "active",
+    )
+    result = await db.execute(stmt)
+    enrollment = result.scalar_one_or_none()
+
+    if not enrollment:
+        raise HTTPException(status_code=404, detail="You are not enrolled in this class.")
+
+    enrollment.status = "dropped"
+    await db.commit()
+
+    return {"success": True, "message": "Left class successfully"}
+
+
+# --- Instructor-specific enrollment ---
 
 @router.get("/classes/{class_id}", response_model=dict)
 async def get_class(
@@ -187,7 +328,7 @@ async def delete_class(
     return {"success": True, "message": "Class deactivated"}
 
 
-# --- Enrollment ---
+# --- Enrollment ----
 
 @router.post("/classes/{class_id}/enroll", response_model=dict)
 async def enroll_in_class(

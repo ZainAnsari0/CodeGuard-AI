@@ -1,0 +1,11 @@
+services:
+  - type: web
+    name: codeguard-api
+    runtime: python
+    buildCommand: "cd backend && pip install -r requirements.txt"
+    startCommand: "cd backend && uvicorn main:app --host 0.0.0.0 --port $PORT"
+    envVars:
+      - key: DATABASE_URL
+        value: postgresql://codeguard_user:YOUR_PASSWORD@localhost:5432/codeguard
+      - key: REDIS_URL
+        value: redis://localhost:6379

@@ -12,7 +12,10 @@
 set -euo pipefail
 
 BACKUP_DIR="${BACKUP_DIR:-./backups}"
-COMPOSE_CMD="${COMPOSE_CMD:-docker compose -f docker-compose.yml -f docker-compose.prod.yml}"
+POSTGRES_HOST="${POSTGRES_HOST:-localhost}"
+POSTGRES_PORT="${POSTGRES_PORT:-5432}"
+POSTGRES_DB="${POSTGRES_DB:-codeguard}"
+POSTGRES_USER="${POSTGRES_USER:-codeguard_user}"
 DRY_RUN=false
 FORCE=false
 BACKUP_FILE=""
@@ -93,51 +96,59 @@ fi
 # Create a pre-restore backup
 echo "📦 Creating pre-restore backup..."
 PRE_RESTORE_FILE="$BACKUP_DIR/pre_restore_$(date +%Y%m%d_%H%M%S).sql.gz"
-$COMPOSE_CMD exec -T postgres \
-    pg_dump -U codeguard_user -d codeguard --format=plain --no-owner --no-privileges \
+PGPASSWORD="${PGPASSWORD:-}" pg_dump \
+    -h "$POSTGRES_HOST" -p "$POSTGRES_PORT" \
+    -U "$POSTGRES_USER" -d "$POSTGRES_DB" \
+    --format=plain --no-owner --no-privileges \
     2>/dev/null | gzip > "$PRE_RESTORE_FILE"
 echo "✅ Pre-restore backup: $PRE_RESTORE_FILE"
 
 # Terminate active connections
 echo "🔓 Terminating active database connections..."
-$COMPOSE_CMD exec -T postgres \
-    psql -U codeguard_user -d postgres -c \
-    "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname='codeguard' AND pid<>pg_backend_pid();" \
+PGPASSWORD="${PGPASSWORD:-}" psql \
+    -h "$POSTGRES_HOST" -p "$POSTGRES_PORT" \
+    -U "$POSTGRES_USER" -d postgres -c \
+    "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname='$POSTGRES_DB' AND pid<>pg_backend_pid();" \
     2>/dev/null || true
 
 # Drop and recreate database
 echo "🗑️  Recreating database..."
-$COMPOSE_CMD exec -T postgres \
-    psql -U codeguard_user -d postgres -c \
-    "DROP DATABASE IF EXISTS codeguard;" 2>/dev/null
-$COMPOSE_CMD exec -T postgres \
-    psql -U codeguard_user -d postgres -c \
-    "CREATE DATABASE codeguard OWNER codeguard_user;" 2>/dev/null
+PGPASSWORD="${PGPASSWORD:-}" psql \
+    -h "$POSTGRES_HOST" -p "$POSTGRES_PORT" \
+    -U "$POSTGRES_USER" -d postgres -c \
+    "DROP DATABASE IF EXISTS $POSTGRES_DB;" 2>/dev/null
+PGPASSWORD="${PGPASSWORD:-}" psql \
+    -h "$POSTGRES_HOST" -p "$POSTGRES_PORT" \
+    -U "$POSTGRES_USER" -d postgres -c \
+    "CREATE DATABASE $POSTGRES_DB OWNER $POSTGRES_USER;" 2>/dev/null
 
 # Restore
 echo "📥 Restoring database..."
 if [[ "$BACKUP_FILE" == *.gz ]]; then
-    gunzip -c "$BACKUP_FILE" | $COMPOSE_CMD exec -T postgres \
-        psql -U codeguard_user -d codeguard 2>&1 | tail -5
+    gunzip -c "$BACKUP_FILE" | PGPASSWORD="${PGPASSWORD:-}" psql \
+        -h "$POSTGRES_HOST" -p "$POSTGRES_PORT" \
+        -U "$POSTGRES_USER" -d "$POSTGRES_DB" 2>&1 | tail -5
 else
-    $COMPOSE_CMD exec -T postgres \
-        psql -U codeguard_user -d codeguard < "$BACKUP_FILE" 2>&1 | tail -5
+    PGPASSWORD="${PGPASSWORD:-}" psql \
+        -h "$POSTGRES_HOST" -p "$POSTGRES_PORT" \
+        -U "$POSTGRES_USER" -d "$POSTGRES_DB" < "$BACKUP_FILE" 2>&1 | tail -5
 fi
 
 # Verify
-TABLE_COUNT=$($COMPOSE_CMD exec -T postgres \
-    psql -U codeguard_user -d codeguard -t -c \
+TABLE_COUNT=$(PGPASSWORD="${PGPASSWORD:-}" psql \
+    -h "$POSTGRES_HOST" -p "$POSTGRES_PORT" \
+    -U "$POSTGRES_USER" -d "$POSTGRES_DB" -t -c \
     "SELECT count(*) FROM information_schema.tables WHERE table_schema='public';" 2>/dev/null | tr -d ' ')
 echo "✅ Restore complete — $TABLE_COUNT tables restored"
 
 # Run migrations to ensure schema is up to date
 echo "🔄 Running pending migrations..."
-$COMPOSE_CMD exec api alembic upgrade head 2>/dev/null || echo "⚠️  Migration check skipped"
+cd backend 2>/dev/null && source venv/bin/activate 2>/dev/null && alembic upgrade head 2>/dev/null || echo "⚠️  Migration check skipped"
 echo ""
 echo "═════════════════════════════════════════"
 echo "  Restore Complete"
-echo "═══════════════════════════════════════════"
+echo "═════════════════════════════════════════"
 echo "  Restored from: $BACKUP_FILE"
 echo "  Pre-restore backup: $PRE_RESTORE_FILE"
 echo "  Tables: $TABLE_COUNT"
-echo "═══════════════════════════════════════════"
+echo "═════════════════════════════════════════"

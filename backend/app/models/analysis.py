@@ -6,7 +6,7 @@ Database models for security analysis results.
 from typing import Optional, List, Dict, Any
 from datetime import datetime, timezone
 from sqlmodel import SQLModel, Field, Relationship, Column
-from sqlalchemy import String, DateTime, func, Text, Enum, Integer, JSON, ForeignKey
+from sqlalchemy import String, DateTime, func, Text, Enum, Integer, JSON, ForeignKey, Boolean, Float
 import uuid
 import enum
 
@@ -131,6 +131,23 @@ class FindingBase(SQLModel):
         description="Additional metadata"
     )
 
+    # AI Enrichment fields
+    explanation: Optional[str] = Field(
+        default=None,
+        sa_column=Column(Text, nullable=True),
+        description="AI-generated explanation JSON"
+    )
+    explanation_provider: Optional[str] = Field(
+        default=None,
+        sa_column=Column(String, nullable=True),
+        description="AI provider that generated the explanation"
+    )
+    explanation_generated_at: Optional[datetime] = Field(
+        default=None,
+        sa_column=Column(DateTime(timezone=True), nullable=True),
+        description="When the explanation was generated"
+    )
+
 
 class Finding(FindingBase, table=True):
     """Finding database model."""
@@ -149,13 +166,13 @@ class Finding(FindingBase, table=True):
 
     created_at: Optional[datetime] = Field(
         default_factory=lambda: datetime.now(timezone.utc),
-        sa_column=Column(DateTime, server_default=func.now()),
+        sa_column=Column(DateTime(timezone=True), server_default=func.now()),
         description="Created timestamp"
     )
 
     updated_at: Optional[datetime] = Field(
         default_factory=lambda: datetime.now(timezone.utc),
-        sa_column=Column(DateTime, onupdate=func.now()),
+        sa_column=Column(DateTime(timezone=True), onupdate=func.now()),
         description="Updated timestamp"
     )
 
@@ -211,6 +228,23 @@ class FixSuggestionBase(SQLModel):
         description="Target programming language"
     )
 
+    # AI Validation fields
+    ast_validated: Optional[bool] = Field(
+        default=None,
+        sa_column=Column(Boolean, nullable=True),
+        description="Whether AST validation passed"
+    )
+    validation_warnings: Optional[Dict[str, Any]] = Field(
+        default=None,
+        sa_column=Column(JSON, nullable=True),
+        description="AST validation warnings"
+    )
+    confidence: Optional[float] = Field(
+        default=None,
+        sa_column=Column(Float, nullable=True),
+        description="AI confidence score for the fix"
+    )
+
 
 class FixSuggestion(FixSuggestionBase, table=True):
     """FixSuggestion database model."""
@@ -229,13 +263,13 @@ class FixSuggestion(FixSuggestionBase, table=True):
 
     created_at: Optional[datetime] = Field(
         default_factory=lambda: datetime.now(timezone.utc),
-        sa_column=Column(DateTime, server_default=func.now()),
+        sa_column=Column(DateTime(timezone=True), server_default=func.now()),
         description="Created timestamp"
     )
 
     updated_at: Optional[datetime] = Field(
         default_factory=lambda: datetime.now(timezone.utc),
-        sa_column=Column(DateTime, onupdate=func.now()),
+        sa_column=Column(DateTime(timezone=True), onupdate=func.now()),
         description="Updated timestamp"
     )
 
@@ -272,6 +306,11 @@ class AnalysisBase(SQLModel):
         sa_column=Column(String, default="main", nullable=True),
         description="Branch analyzed"
     )
+    scan_name: Optional[str] = Field(
+        default=None,
+        sa_column=Column(String, nullable=True),
+        description="User-friendly name of the scan"
+    )
     commit_hash: Optional[str] = Field(
         default=None,
         sa_column=Column(String, nullable=True),
@@ -284,12 +323,12 @@ class AnalysisBase(SQLModel):
     )
     started_at: Optional[datetime] = Field(
         default=None,
-        sa_column=Column(DateTime, nullable=True),
+        sa_column=Column(DateTime(timezone=True), nullable=True),
         description="Analysis start time"
     )
     completed_at: Optional[datetime] = Field(
         default=None,
-        sa_column=Column(DateTime, nullable=True),
+        sa_column=Column(DateTime(timezone=True), nullable=True),
         description="Analysis completion time"
     )
     summary: Optional[Dict[str, Any]] = Field(
@@ -321,13 +360,13 @@ class Analysis(AnalysisBase, table=True):
 
     created_at: Optional[datetime] = Field(
         default_factory=lambda: datetime.now(timezone.utc),
-        sa_column=Column(DateTime, server_default=func.now()),
+        sa_column=Column(DateTime(timezone=True), server_default=func.now()),
         description="Created timestamp"
     )
 
     updated_at: Optional[datetime] = Field(
         default_factory=lambda: datetime.now(timezone.utc),
-        sa_column=Column(DateTime, onupdate=func.now()),
+        sa_column=Column(DateTime(timezone=True), onupdate=func.now()),
         description="Updated timestamp"
     )
 

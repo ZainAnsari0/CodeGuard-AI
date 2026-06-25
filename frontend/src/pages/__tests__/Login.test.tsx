@@ -1,11 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
-import { render, screen } from '@testing-library/react'
-import userEvent from '@testing-library/user-event'
-import { renderWithProviders } from '../../test/utils'
 import { useAuthStore } from '../../store/authStore'
-
-// We need to import the Login page component
-// Since it uses complex UI, we'll test the auth store interactions
 
 describe('Login Page (via AuthStore)', () => {
   beforeEach(() => {
@@ -20,10 +14,9 @@ describe('Login Page (via AuthStore)', () => {
   })
 
   it('sets error on failed login', async () => {
-    globalThis.fetch = vi.fn().mockResolvedValueOnce({
-      ok: false,
-      json: () => Promise.resolve({ detail: 'Invalid credentials' }),
-    })
+    globalThis.fetch = vi.fn().mockResolvedValueOnce(
+      new Response(JSON.stringify({ detail: 'Invalid credentials' }), { status: 400 })
+    )
 
     const result = await useAuthStore.getState().login('bad@test.com', 'wrongpass')
     expect(result.success).toBe(false)
@@ -39,10 +32,16 @@ describe('Login Page (via AuthStore)', () => {
     const loginPromise = useAuthStore.getState().login('test@test.com', 'password')
     expect(useAuthStore.getState().isLoading).toBe(true)
 
-    resolveLogin!({
-      ok: true,
-      json: () => Promise.resolve({ user: { id: '1', email: 'test@test.com', role: 'developer' }, access_token: 'token', refresh_token: 'refresh' }),
-    })
+    resolveLogin!(
+      new Response(
+        JSON.stringify({
+          user: { id: '1', email: 'test@test.com', role: 'developer' },
+          access_token: 'token',
+          refresh_token: 'refresh',
+        }),
+        { status: 200 }
+      )
+    )
 
     await loginPromise
     expect(useAuthStore.getState().isLoading).toBe(false)

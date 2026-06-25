@@ -1,8 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { useAuthStore } from '../authStore'
 
-const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000'
-
 describe('AuthStore', () => {
   beforeEach(() => {
     useAuthStore.setState({
@@ -84,12 +82,14 @@ describe('AuthStore', () => {
   describe('login', () => {
     it('handles successful login', async () => {
       const mockUser = { id: '1', email: 'test@test.com', role: 'developer', full_name: null, name: null, is_active: true, is_superuser: false, last_login: null, created_at: null, updated_at: null }
-      globalThis.fetch = vi.fn().mockResolvedValueOnce({
-        ok: true,
-        json: () => Promise.resolve({
-          data: { user: mockUser },
-        }),
-      })
+      globalThis.fetch = vi.fn().mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            data: { user: mockUser },
+          }),
+          { status: 200 }
+        )
+      )
 
       const result = await useAuthStore.getState().login('test@test.com', 'password123')
 
@@ -99,10 +99,9 @@ describe('AuthStore', () => {
     })
 
     it('handles login failure', async () => {
-      globalThis.fetch = vi.fn().mockResolvedValueOnce({
-        ok: false,
-        json: () => Promise.resolve({ detail: 'Invalid credentials' }),
-      })
+      globalThis.fetch = vi.fn().mockResolvedValueOnce(
+        new Response(JSON.stringify({ detail: 'Invalid credentials' }), { status: 400 })
+      )
 
       const result = await useAuthStore.getState().login('test@test.com', 'wrong')
 
@@ -125,17 +124,16 @@ describe('AuthStore', () => {
     it('clears auth state on logout', async () => {
       useAuthStore.setState({
         user: { id: '1', email: 'test@test.com', role: 'developer', is_active: true, full_name: null, name: null, is_superuser: false, last_login: null, created_at: null, updated_at: null },
-        token: 'test-token',
-        refreshToken: 'refresh-token',
         isAuthenticated: true,
       })
 
-      globalThis.fetch = vi.fn().mockResolvedValueOnce({ ok: true, json: () => Promise.resolve({}) })
+      globalThis.fetch = vi.fn().mockResolvedValueOnce(
+        new Response(JSON.stringify({}), { status: 200 })
+      )
 
       await useAuthStore.getState().logout()
 
       expect(useAuthStore.getState().user).toBeNull()
-      expect(useAuthStore.getState().token).toBeNull()
       expect(useAuthStore.getState().isAuthenticated).toBe(false)
     })
   })

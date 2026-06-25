@@ -209,7 +209,8 @@ class TestPromptManager:
         manager = PromptManager()
         info = manager.get_template_info("vulnerability_analysis")
         assert info["exists"] is True
-        assert info["current_version"] == "1.0.0"
+        # Current version is tracked in app.ai.prompts.versions.PROMPT_VERSIONS
+        assert info["current_version"] == "1.1.0"
 
     def test_fix_generation_template(self):
         """Test the fix generation template renders correctly."""

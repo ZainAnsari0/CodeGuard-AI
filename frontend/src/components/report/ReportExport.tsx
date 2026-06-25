@@ -12,7 +12,7 @@ export function ReportExport({ data, scanId }: ReportExportProps) {
       scan_id: data.scan_id,
       status: data.status,
       total_files: data.total_files,
-      findings: data.findings.map(f => ({
+      findings: (data?.findings || []).map(f => ({
         id: f.id,
         vulnerability_type: f.vulnerability_type,
         severity: f.severity,

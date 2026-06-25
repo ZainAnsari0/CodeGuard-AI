@@ -1,6 +1,7 @@
 """CodeGuard AI - Python AST Scanner
 Scans Python source files for security vulnerabilities using AST analysis.
-Runs inside the ephemeral scanner Docker container.
+Runs in-process within the Celery worker — no container isolation needed
+since code is only parsed, never executed.
 """
 
 import ast
@@ -17,33 +18,40 @@ logger = logging.getLogger(__name__)
 class PythonScanner:
     """Scans Python source files for security vulnerabilities using AST."""
 
-    def scan_file(self, file_path: str) -> List[Dict[str, Any]]:
-        """Scan a single Python file for vulnerabilities."""
+    def scan_content(self, content: str, filename: str = "code.py") -> List[Dict[str, Any]]:
+        """Scan Python content directly without writing to disk."""
         findings = []
 
         try:
-            with open(file_path, "r", errors="replace") as f:
-                source = f.read()
-
-            tree = ast.parse(source, filename=file_path)
+            tree = ast.parse(content, filename=filename)
         except SyntaxError as e:
-            logger.warning(f"Syntax error in {file_path}: {e}")
+            logger.warning(f"Syntax error in {filename}: {e}")
             return findings
         except Exception as e:
-            logger.warning(f"Failed to scan {file_path}: {e}")
+            logger.warning(f"Failed to parse content for {filename}: {e}")
             return findings
 
         for node in ast.walk(tree):
-            findings.extend(self._check_sql_injection(node, file_path, source))
-            findings.extend(self._check_command_injection(node, file_path, source))
-            findings.extend(self._check_hardcoded_secrets(node, file_path, source))
-            findings.extend(self._check_eval_usage(node, file_path, source))
-            findings.extend(self._check_insecure_pickle(node, file_path, source))
-            findings.extend(self._check_insecure_yaml(node, file_path, source))
-            findings.extend(self._check_insecure_crypto(node, file_path, source))
-            findings.extend(self._check_path_traversal(node, file_path, source))
+            findings.extend(self._check_sql_injection(node, filename, content))
+            findings.extend(self._check_command_injection(node, filename, content))
+            findings.extend(self._check_hardcoded_secrets(node, filename, content))
+            findings.extend(self._check_eval_usage(node, filename, content))
+            findings.extend(self._check_insecure_pickle(node, filename, content))
+            findings.extend(self._check_insecure_yaml(node, filename, content))
+            findings.extend(self._check_insecure_crypto(node, filename, content))
+            findings.extend(self._check_path_traversal(node, filename, content))
 
         return findings
+
+    def scan_file(self, file_path: str) -> List[Dict[str, Any]]:
+        """Scan a single Python file for vulnerabilities."""
+        try:
+            with open(file_path, "r", errors="replace") as f:
+                source = f.read()
+            return self.scan_content(source, file_path)
+        except Exception as e:
+            logger.warning(f"Failed to scan {file_path}: {e}")
+            return []
 
     def scan_directory(self, directory: str) -> List[Dict[str, Any]]:
         """Recursively scan a directory for Python files."""
@@ -85,6 +93,7 @@ class PythonScanner:
         """Detect string formatting in SQL execution calls (CWE-89)."""
         findings = []
         sql_functions = {"execute", "executemany", "raw", "raw_query"}
+        sql_keywords = {"SELECT", "INSERT", "UPDATE", "DELETE", "DROP", "CREATE", "ALTER"}
 
         if isinstance(node, ast.Call):
             func = node.func
@@ -112,7 +121,52 @@ class PythonScanner:
                             confidence=0.75,
                         ))
 
+        # Check for string concatenation / f-strings creating SQL queries.
+        # Walks nested BinOp(+) chains and JoinedStr nodes so multi-part
+        # concatenations like "SELECT ..." + str(x) + "..." are caught.
+        if isinstance(node, ast.Assign):
+            literals, has_dynamic = self._collect_sql_string_parts(node.value)
+            if has_dynamic:
+                combined = " ".join(literals).upper()
+                if any(keyword in combined for keyword in sql_keywords):
+                    line = self._get_line(node, source)
+                    snippet = self._get_snippet(source, line)
+                    findings.append(self._make_finding(
+                        "SQL Injection", "high", "CWE-89",
+                        file_path, line, snippet,
+                        "Dynamic value interpolated/concatenated into SQL query. Use parameterized queries instead.",
+                        confidence=0.80,
+                    ))
+
         return findings
+
+    def _collect_sql_string_parts(self, node: ast.AST):
+        """Collect literal string fragments from a + BinOp chain or an f-string,
+        and report whether any dynamic (non-constant) value is mixed in.
+
+        Returns (list_of_string_literals, has_dynamic_part).
+        """
+        literals: List[str] = []
+        has_dynamic = False
+
+        if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
+            left_lits, left_dyn = self._collect_sql_string_parts(node.left)
+            right_lits, right_dyn = self._collect_sql_string_parts(node.right)
+            return left_lits + right_lits, (left_dyn or right_dyn)
+
+        if isinstance(node, ast.JoinedStr):
+            for value in node.values:
+                if isinstance(value, ast.Constant) and isinstance(value.value, str):
+                    literals.append(value.value)
+                elif isinstance(value, ast.FormattedValue):
+                    has_dynamic = True
+            return literals, has_dynamic
+
+        if isinstance(node, ast.Constant) and isinstance(node.value, str):
+            return [node.value], False
+
+        # Name, Call, Attribute, Subscript, etc. = dynamic, untrusted input
+        return [], True
 
     def _check_command_injection(self, node: ast.AST, file_path: str, source: str) -> List[Dict]:
         """Detect os.system/subprocess with string formatting (CWE-78)."""
@@ -157,29 +211,52 @@ class PythonScanner:
     def _check_hardcoded_secrets(self, node: ast.AST, file_path: str, source: str) -> List[Dict]:
         """Detect hardcoded passwords, API keys, and secrets (CWE-798)."""
         findings = []
-        secret_patterns = {
-            "password": re.compile(r"(password|passwd|pwd)\s*=\s*['\"][^'\"]{3,}['\"]", re.IGNORECASE),
-            "api_key": re.compile(r"(api_key|apikey|api_secret|secret_key)\s*=\s*['\"][^'\"]{8,}['\"]", re.IGNORECASE),
-            "token": re.compile(r"(token|auth_token|access_token)\s*=\s*['\"][^'\"]{8,}['\"]", re.IGNORECASE),
+        
+        # Patterns for variable names (case-insensitive). Substring match,
+        # so "private_key_secret", "db_password", "client_secret" all hit.
+        secret_var_patterns = {
+            "password": ["password", "passwd", "pwd"],
+            "api_key": ["api_key", "apikey", "api_secret", "secret_key", "access_key",
+                        "private_key", "secret", "credential", "client_secret"],
+            "token": ["token", "auth_token", "access_token", "bearer_token"],
         }
 
         if isinstance(node, ast.Assign):
             for target in node.targets:
                 if isinstance(target, ast.Name):
-                    name_lower = target.id.lower()
+                    var_name_lower = target.id.lower()
+                    
+                    # Check if it's a string constant value
                     if isinstance(node.value, ast.Constant) and isinstance(node.value.value, str):
                         val = node.value.value
-                        for pattern_name, pattern in secret_patterns.items():
-                            if pattern.search(f"{target.id} = '{val}'"):
-                                line = getattr(node, "lineno", 0)
-                                snippet = self._get_snippet(source, line)
-                                findings.append(self._make_finding(
-                                    "Hardcoded Secret", "high", "CWE-798",
-                                    file_path, line, snippet,
-                                    f"Hardcoded {pattern_name} detected. Use environment variables or a secrets manager.",
-                                    confidence=0.8,
-                                ))
+                        
+                        # Skip short values that are unlikely to be real secrets
+                        if len(val) < 6:
+                            continue
+
+                        placeholders = ["", "none", "null", "todo", "changeme",
+                                        "example", "your_key_here", "xxxxxx", "placeholder"]
+
+                        # Report only once per assignment even if several patterns match
+                        matched = False
+                        # Check if variable name matches any secret pattern
+                        for secret_type, patterns in secret_var_patterns.items():
+                            if matched:
                                 break
+                            for pattern in patterns:
+                                if pattern in var_name_lower:
+                                    # Additional check: value should look like a secret (not placeholder)
+                                    if val and val.lower() not in placeholders:
+                                        matched = True
+                                        line = getattr(node, "lineno", 0)
+                                        snippet = self._get_snippet(source, line)
+                                        findings.append(self._make_finding(
+                                            "Hardcoded Secret", "high", "CWE-798",
+                                            file_path, line, snippet,
+                                            f"Hardcoded {secret_type} detected. Use environment variables or a secrets manager.",
+                                            confidence=0.8,
+                                        ))
+                                    break
 
         return findings
 
@@ -268,17 +345,24 @@ class PythonScanner:
         if isinstance(node, ast.Call):
             if isinstance(node.func, ast.Name) and node.func.id == "open":
                 for arg in node.args:
+                    # Check for any string concatenation in file paths
                     if isinstance(arg, ast.BinOp) and isinstance(arg.op, ast.Add):
-                        if isinstance(arg.left, ast.Call):
-                            if isinstance(arg.left.func, ast.Attribute) and arg.left.func.attr == "get":
-                                line = getattr(node, "lineno", 0)
-                                snippet = self._get_snippet(source, line)
-                                findings.append(self._make_finding(
-                                    "Path Traversal", "medium", "CWE-22",
-                                    file_path, line, snippet,
-                                    "User input concatenated in file path. Validate and sanitize path inputs.",
-                                    confidence=0.6,
-                                ))
+                        # Check if either side involves a variable (not just constants)
+                        has_variable = False
+                        if isinstance(arg.right, ast.Name):
+                            has_variable = True
+                        elif isinstance(arg.left, ast.Name):
+                            has_variable = True
+                        
+                        if has_variable:
+                            line = getattr(node, "lineno", 0)
+                            snippet = self._get_snippet(source, line)
+                            findings.append(self._make_finding(
+                                "Path Traversal", "high", "CWE-22",
+                                file_path, line, snippet,
+                                "String concatenation in file path with variable. Validate and sanitize path inputs.",
+                                confidence=0.75,
+                            ))
 
         return findings
 

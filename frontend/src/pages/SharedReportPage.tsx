@@ -7,7 +7,7 @@ import { FindingCard } from '../components/report/FindingCard'
 import type { Finding, ScanResult } from '../types'
 import { SEVERITY_COLORS, getLanguageFromFilename } from '../utils/severity'
 
-const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000'
+const API_BASE_URL = import.meta.env.VITE_API_URL ?? 'http://localhost:8000'
 
 export function SharedReportPage() {
   const { token } = useParams<{ token: string }>()
@@ -119,7 +119,7 @@ export function SharedReportPage() {
               )
             ))}
             <div className="text-center ml-2">
-              <p className="text-xl font-bold font-mono text-text-primary">{data.findings.length}</p>
+              <p className="text-xl font-bold font-mono text-text-primary">{(data?.findings || []).length}</p>
               <p className="text-[10px] text-text-muted uppercase tracking-wider">Total</p>
             </div>
           </div>
@@ -184,7 +184,7 @@ export function SharedReportPage() {
               </>
             ) : (
               <FindingsPanel
-                findings={data.findings}
+                findings={data?.findings || []}
                 activeFindingId={activeFinding?.id ?? null}
                 onFindingSelect={(f) => {
                   setActiveFinding(f)

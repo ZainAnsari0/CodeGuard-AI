@@ -9,7 +9,6 @@ describe('ScanStore', () => {
       progress: 0,
       stage: null,
       totalFiles: 0,
-      filesScanned: 0,
       findings: [],
       codeFiles: {},
       isUploading: false,
@@ -51,14 +50,16 @@ describe('ScanStore', () => {
   })
 
   it('handles upload success', async () => {
-    globalThis.fetch = vi.fn().mockResolvedValueOnce({
-      ok: true,
-      json: () => Promise.resolve({
-        scan_id: 'scan-456',
-        file_count: 3,
-        status: 'pending',
-      }),
-    })
+    globalThis.fetch = vi.fn().mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          scan_id: 'scan-456',
+          file_count: 3,
+          status: 'pending',
+        }),
+        { status: 200 }
+      )
+    )
 
     // Set a token in auth store mock - scanStore reads token from store cast
     useScanStore.setState({ isUploading: false, error: null } as any)
@@ -71,10 +72,9 @@ describe('ScanStore', () => {
   })
 
   it('handles upload failure', async () => {
-    globalThis.fetch = vi.fn().mockResolvedValueOnce({
-      ok: false,
-      json: () => Promise.resolve({ detail: 'Upload failed' }),
-    })
+    globalThis.fetch = vi.fn().mockResolvedValueOnce(
+      new Response(JSON.stringify({ detail: 'Upload failed' }), { status: 400 })
+    )
 
     const file = new File(['test.py'], 'test.py', { type: 'text/x-python' })
     const result = await useScanStore.getState().uploadFiles([file], 'python')
@@ -96,10 +96,12 @@ describe('ScanStore', () => {
     expect(useScanStore.getState().isUploading).toBe(true)
 
     // Resolve the fetch
-    resolvePromise!({
-      ok: true,
-      json: () => Promise.resolve({ scan_id: 'scan-789', file_count: 1, status: 'pending' }),
-    })
+    resolvePromise!(
+      new Response(
+        JSON.stringify({ scan_id: 'scan-789', file_count: 1, status: 'pending' }),
+        { status: 200 }
+      )
+    )
 
     await uploadPromise
     expect(useScanStore.getState().isUploading).toBe(false)

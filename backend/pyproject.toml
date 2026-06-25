@@ -9,7 +9,7 @@ markers = [
     "unit: Unit tests (no external dependencies)",
     "integration: Integration tests (require DB/services)",
     "slow: Slow-running tests",
-    "requires_docker: Tests requiring Docker daemon",
+    "requires_workspace: Tests requiring temp workspace directory",
     "requires_ollama: Tests requiring Ollama server",
 ]
 

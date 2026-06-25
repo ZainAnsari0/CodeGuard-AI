@@ -96,9 +96,7 @@ request_letsencrypt() {
     fi
 
     # Stop nginx if running (certbot needs port 80)
-    docker compose -f "${PROJECT_DIR}/../docker-compose.yml" \
-        -f "${PROJECT_DIR}/../docker-compose.prod.yml" \
-        stop frontend 2>/dev/null || true
+    sudo systemctl stop nginx 2>/dev/null || true
 
     echo "  Requesting certificate..."
     sudo certbot certonly --standalone \
@@ -107,9 +105,9 @@ request_letsencrypt() {
         --non-interactive --agree-tos --email "admin@${DOMAIN}"
 
     local le_dir="/etc/letsencrypt/live/${DOMAIN}"
-    cp "${le_dir}/privkey.pem" "${TLS_KEY}"
-    cp "${le_dir}/fullchain.pem" "${TLS_FULLCHAIN}"
-    cp "${le_dir}/cert.pem" "${TLS_CERT}"
+    sudo cp "${le_dir}/privkey.pem" "${TLS_KEY}"
+    sudo cp "${le_dir}/fullchain.pem" "${TLS_FULLCHAIN}"
+    sudo cp "${le_dir}/cert.pem" "${TLS_CERT}"
 
     chmod 600 "${TLS_KEY}"
     chmod 644 "${TLS_CERT}" "${TLS_FULLCHAIN}"
@@ -117,9 +115,7 @@ request_letsencrypt() {
     echo "  Copied Let's Encrypt certs to ${CERTS_DIR}"
 
     # Restart nginx
-    docker compose -f "${PROJECT_DIR}/../docker-compose.yml" \
-        -f "${PROJECT_DIR}/../docker-compose.prod.yml" \
-        start frontend 2>/dev/null || true
+    sudo systemctl start nginx 2>/dev/null || true
 }
 
 validate_certs() {

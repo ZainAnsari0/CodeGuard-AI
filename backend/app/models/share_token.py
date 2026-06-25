@@ -34,7 +34,7 @@ class ShareToken(SQLModel, table=True):
     )
     expires_at: Optional[datetime] = Field(
         default=None,
-        sa_column=Column(DateTime, nullable=True),
+        sa_column=Column(DateTime(timezone=True), nullable=True),
         description="Optional expiry time",
     )
     is_revoked: bool = Field(
@@ -49,5 +49,5 @@ class ShareToken(SQLModel, table=True):
     )
     created_at: Optional[datetime] = Field(
         default_factory=lambda: datetime.now(timezone.utc),
-        sa_column=Column(DateTime, server_default=func.now()),
+        sa_column=Column(DateTime(timezone=True), server_default=func.now()),
     )

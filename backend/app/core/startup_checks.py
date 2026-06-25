@@ -87,6 +87,28 @@ def _collect_checks(settings) -> List[dict]:
             "message": f"JWT public key at {settings.JWT_PUBLIC_KEY_PATH}: {'found' if public_exists else 'missing'}",
         })
 
+    # ── Upload/workspace directory is writable ─────────────────────
+    upload_dir = getattr(settings, "UPLOAD_DIR", "/tmp/codeguard_uploads")
+    try:
+        os.makedirs(upload_dir, exist_ok=True)
+        test_file = os.path.join(upload_dir, ".health_check")
+        with open(test_file, "w") as f:
+            f.write("ok")
+        os.remove(test_file)
+        checks.append({
+            "name": "workspace:writable",
+            "level": "warning",
+            "passed": True,
+            "message": f"Upload directory {upload_dir} is writable",
+        })
+    except Exception as e:
+        checks.append({
+            "name": "workspace:writable",
+            "level": "critical" if is_prod else "warning",
+            "passed": False,
+            "message": f"Upload directory {upload_dir} is not writable: {e}",
+        })
+
     return checks
 
 

@@ -14,9 +14,10 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 
 # ── Configuration ──────────────────────────────────────────
-POSTGRES_CONTAINER="${POSTGRES_CONTAINER:-codeguard_postgres}"
 POSTGRES_DB="${POSTGRES_DB:-codeguard}"
 POSTGRES_USER="${POSTGRES_USER:-codeguard_user}"
+POSTGRES_HOST="${POSTGRES_HOST:-localhost}"
+POSTGRES_PORT="${POSTGRES_PORT:-5432}"
 
 # ── Validate arguments ─────────────────────────────────────
 if [ $# -ne 1 ]; then
@@ -39,9 +40,9 @@ echo "=========================================="
 echo " CodeGuard AI — Database Restore"
 echo "=========================================="
 echo ""
-echo "  Database:  ${POSTGRES_DB}"
-echo "  Container: ${POSTGRES_CONTAINER}"
-echo "  Backup:    ${BACKUP_FILE}"
+echo "  Database: ${POSTGRES_DB}"
+echo "  Host:     ${POSTGRES_HOST}:${POSTGRES_PORT}"
+echo "  Backup:   ${BACKUP_FILE}"
 echo ""
 echo "  WARNING: This will:"
 echo "  1. Stop API and Celery services"
@@ -66,29 +67,26 @@ if ! gzip -t "${BACKUP_FILE}" 2>/dev/null; then
 fi
 echo "  ✓ Backup integrity verified"
 
-# ── Check container is running ─────────────────────────────
-echo "[2/5] Checking PostgreSQL container..."
-if ! docker ps --format '{{.Names}}' | grep -q "^${POSTGRES_CONTAINER}$"; then
-    echo "ERROR: PostgreSQL container '${POSTGRES_CONTAINER}' is not running."
+# ── Check PostgreSQL is running ─────────────────────────────
+echo "[2/5] Checking PostgreSQL..."
+if ! psql -h "${POSTGRES_HOST}" -p "${POSTGRES_PORT}" -U "${POSTGRES_USER}" -d "${POSTGRES_DB}" -c "SELECT 1;" &>/dev/null; then
+    echo "ERROR: Cannot connect to PostgreSQL at ${POSTGRES_HOST}:${POSTGRES_PORT}"
     exit 1
 fi
-echo "  ✓ PostgreSQL container is running"
+echo "  ✓ PostgreSQL is accessible"
 
 # ── Stop API and Celery services ────────────────────────────
 echo "[3/5] Stopping API and Celery services..."
-cd "${PROJECT_DIR}"
-
-if [ -f "docker-compose.prod.yml" ]; then
-    docker compose -f docker-compose.yml -f docker-compose.prod.yml stop api celery celery-beat 2>/dev/null || true
-else
-    docker compose stop api celery celery-beat 2>/dev/null || true
-fi
+sudo systemctl stop codeguard-api 2>/dev/null || true
+sudo systemctl stop codeguard-celery 2>/dev/null || true
+sudo systemctl stop codeguard-celery-beat 2>/dev/null || true
 echo "  ✓ Services stopped"
 
 # ── Restore database ───────────────────────────────────────
 echo "[4/5] Restoring database..."
-gunzip -c "${BACKUP_FILE}" | docker exec -i "${POSTGRES_CONTAINER}" \
-    psql -U "${POSTGRES_USER}" -d "${POSTGRES_DB}"
+gunzip -c "${BACKUP_FILE}" | PGPASSWORD="${PGPASSWORD:-}" psql \
+    -h "${POSTGRES_HOST}" -p "${POSTGRES_PORT}" \
+    -U "${POSTGRES_USER}" -d "${POSTGRES_DB}"
 
 if [ $? -eq 0 ]; then
     echo "  ✓ Database restored successfully"
@@ -99,13 +97,9 @@ fi
 
 # ── Restart services ───────────────────────────────────────
 echo "[5/5] Restarting services..."
-
-if [ -f "docker-compose.prod.yml" ]; then
-    docker compose -f docker-compose.yml -f docker-compose.prod.yml start api celery celery-beat
-else
-    docker compose start api celery celery-beat
-fi
-
+sudo systemctl start codeguard-api 2>/dev/null || true
+sudo systemctl start codeguard-celery 2>/dev/null || true
+sudo systemctl start codeguard-celery-beat 2>/dev/null || true
 echo "  ✓ Services restarted"
 
 # ── Verify database connectivity ────────────────────────────
@@ -113,14 +107,15 @@ echo ""
 echo "Verifying database connectivity..."
 sleep 3
 
-docker exec "${POSTGRES_CONTAINER}" \
-    psql -U "${POSTGRES_USER}" -d "${POSTGRES_DB}" -c "SELECT 1;" > /dev/null 2>&1
+PGPASSWORD="${PGPASSWORD:-}" psql \
+    -h "${POSTGRES_HOST}" -p "${POSTGRES_PORT}" \
+    -U "${POSTGRES_USER}" -d "${POSTGRES_DB}" -c "SELECT 1;" > /dev/null 2>&1
 
 if [ $? -eq 0 ]; then
     echo "  ✓ Database is accessible"
 else
     echo "  ✗ Database connectivity check failed"
-    echo "  Check service logs: docker compose logs api"
+    echo "  Check service logs: journalctl -u codeguard-api -n 50"
 fi
 
 echo ""

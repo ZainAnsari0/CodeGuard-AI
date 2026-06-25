@@ -1,48 +1,37 @@
 # ═══════════════════════════════════════════════════════════════════
-# CodeGuard AI — Production Operations Makefile
+# CodeGuard AI — Development & Operations Makefile
 # ═══════════════════════════════════════════════════════════════════
 #
 # Usage:
 #   make <target>        Run a single target
 #   make help             Show all available targets
-#   ENV=staging           Override environment (default: production)
 #
 # Prerequisites:
-#   - Docker + Docker Compose v2
+#   - Python 3.11+ with venv
+#   - Node.js 18+ with npm
+#   - PostgreSQL 16+
+#   - Redis 7+
 #   - OpenSSL (for key generation)
-#   - jq (for JSON parsing in health checks)
 # ═══════════════════════════════════════════════════════════════════
 
 # ── Configuration ─────────────────────────────────────────────────
-ENV              ?= production
-COMPOSE_DEV      = docker compose -f docker-compose.yml
-COMPOSE_STAGING  = docker compose -f docker-compose.yml -f docker-compose.staging.yml
-COMPOSE_PROD     = docker compose -f docker-compose.yml -f docker-compose.prod.yml
-COMPOSE          = $(if $(filter staging,$(ENV)),$(COMPOSE_STAGING),$(COMPOSE_PROD))
-
-DOCKER_REGISTRY  ?= ghcr.io/codeguard-ai
-IMAGE_TAG        ?= latest
-GIT_SHA          := $(shell git rev-parse --short HEAD 2>/dev/null || echo "unknown")
-
-BACKEND_IMG      = $(DOCKER_REGISTRY)/api:$(IMAGE_TAG)
-FRONTEND_IMG     = $(DOCKER_REGISTRY)/frontend:$(IMAGE_TAG)
-CELERY_IMG       = $(DOCKER_REGISTRY)/celery:$(IMAGE_TAG)
-SCANNER_IMG      = $(DOCKER_REGISTRY)/scanner:$(IMAGE_TAG)
+PYTHON          ?= python3
+VENV            ?= backend/venv
+PIP             ?= $(VENV)/bin/pip
+PYTHON_CMD      ?= $(VENV)/bin/python
+CELERY          ?= $(VENV)/bin/celery
+ALEMBIC         ?= $(VENV)/bin/alembic
 
 .PHONY: help \
-        dev up down restart logs ps \
-        build build-push \
-        deploy deploy-rollback deploy-status \
+        dev dev-api dev-celery dev-frontend \
         db-migrate db-migrate-down db-seed db-backup db-restore \
-        certs-generate certs-renew \
+        certs-generate \
         health health-verbose \
         test test-backend test-frontend test-e2e \
         lint lint-backend lint-frontend \
         security-audit \
-        logs-follow logs-api logs-celery logs-frontend \
-        clean clean-volumes clean-images \
-        staging staging-down \
-        docker-prune
+        logs clean \
+        install install-backend install-frontend
 
 # ── Help ──────────────────────────────────────────────────────────
 help: ## Show this help
@@ -51,146 +40,108 @@ help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | \
 		awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-24s\033[0m %s\n", $$1, $$2}'
 	@echo ""
-	@echo "Environment overrides: ENV=staging|production (default: production)"
+	@echo "Services: API (port 8000), Frontend (port 5173), Celery worker"
+
+# ── Install ───────────────────────────────────────────────────────
+install: install-backend install-frontend ## Install all dependencies
+
+install-backend: ## Install backend Python dependencies
+	cd backend && $(PYTHON) -m venv venv && \
+		$(PIP) install -r requirements.txt
+	@echo "✅ Backend dependencies installed"
+
+install-frontend: ## Install frontend Node.js dependencies
+	cd frontend && npm install
+	@echo "✅ Frontend dependencies installed"
 
 # ── Development ───────────────────────────────────────────────────
-dev: ## Start development stack with hot-reload
-	$(COMPOSE_DEV) up --build -d
-	@echo "✅ Development stack running at http://localhost:3000"
+dev: ## Start all development services (API + Celery + Frontend)
+	@echo "Starting CodeGuard AI development environment..."
+	@make dev-api &
+	@make dev-celery &
+	@make dev-frontend &
+	@echo "✅ Development stack running"
+	@echo "   API:       http://localhost:8000"
+	@echo "   API Docs:  http://localhost:8000/api/v1/docs"
+	@echo "   Frontend:  http://localhost:5173"
 
-up: ## Start the $(ENV) stack
-	$(COMPOSE) up -d
-	@echo "✅ $(ENV) stack started"
+dev-api: ## Start the FastAPI development server
+	cd backend && $(PYTHON_CMD) -m uvicorn main:app --host 0.0.0.0 --port 8000 --reload
 
-down: ## Stop the $(ENV) stack
-	$(COMPOSE) down
+dev-celery: ## Start the Celery worker
+	cd backend && $(CELERY) -A app.tasks.celery_app worker --loglevel=info
 
-restart: ## Restart all services
-	$(COMPOSE) restart
+dev-celery-beat: ## Start the Celery beat scheduler
+	cd backend && $(CELERY) -A app.tasks.celery_app beat --loglevel=info
 
-ps: ## Show running containers
-	$(COMPOSE) ps
+dev-frontend: ## Start the Vite frontend dev server
+	cd frontend && npm run dev
 
-# ── Build ──────────────────────────────────────────────────────────
-build: ## Build all images locally
-	docker build -t codeguard-api:$(GIT_SHA) -t codeguard-api:latest ./backend
-	docker build --build-arg NGINX_ENV=prod -t codeguard-frontend:$(GIT_SHA) -t codeguard-frontend:latest ./frontend
-	docker build -f ./backend/Dockerfile.celery -t codeguard-celery:$(GIT_SHA) -t codeguard-celery:latest ./backend
-	docker build -f ./backend/Dockerfile.scanner -t codeguard-scanner:$(GIT_SHA) -t codeguard-scanner:latest ./backend
+# ── Production ───────────────────────────────────────────────────
+prod-api: ## Start API in production mode (4 workers)
+	cd backend && $(PYTHON_CMD) -m uvicorn main:app --host 0.0.0.0 --port 8000 --workers 4
 
-build-push: ## Build, tag, and push images to registry
-	docker buildx build --platform linux/amd64 \
-		-t $(BACKEND_IMG)-$(GIT_SHA) -t $(BACKEND_IMG) \
-		--push ./backend
-	docker buildx build --platform linux/amd64 \
-		--build-arg NGINX_ENV=prod \
-		-t $(FRONTEND_IMG)-$(GIT_SHA) -t $(FRONTEND_IMG) \
-		--push ./frontend
-	docker buildx build --platform linux/amd64 \
-		-f ./backend/Dockerfile.celery \
-		-t $(CELERY_IMG)-$(GIT_SHA) -t $(CELERY_IMG) \
-		--push ./backend
+prod-celery: ## Start Celery worker in production mode
+	cd backend && $(CELERY) -A app.tasks.celery_app worker --loglevel=info --concurrency=4
 
-# ── Deploy ────────────────────────────────────────────────────────
-deploy: ## Full production deploy: build → push → migrate → rollout
-	@echo "🚀 Deploying to $(ENV) (sha: $(GIT_SHA))..."
-	make build-push IMAGE_TAG=$(GIT_SHA)
-	make db-migrate
-	$(COMPOSE) up -d --no-deps --build api celery celery-beat frontend
-	@echo "⏳ Waiting for health check..."
-	@sleep 15
-	make health
-	@echo "✅ Deployment complete"
-
-deploy-rollback: ## Rollback to previous image tag
-	@read -p "Enter tag to rollback to: " tag; \
-	$(COMPOSE) up -d --no-deps \
-		-e API_IMAGE=$(DOCKER_REGISTRY)/api:$$tag \
-		-e FRONTEND_IMAGE=$(DOCKER_REGISTRY)/frontend:$$tag
-
-deploy-status: ## Show deployment status and versions
-	$(COMPOSE) ps
-	@echo ""
-	@echo "Health check:"
-	@curl -sf http://localhost:8000/api/v1/health | python3 -m json.tool 2>/dev/null || echo "❌ API unreachable"
-	@curl -sf http://localhost/health | python3 -m json.tool 2>/dev/null || echo "❌ Frontend unreachable"
-
-# ── Staging ───────────────────────────────────────────────────────
-staging: ## Start staging environment
-	ENV=staging $(COMPOSE_STAGING) up -d --build
-	@echo "✅ Staging environment running at http://localhost:3000"
-
-staging-down: ## Stop staging environment
-	ENV=staging $(COMPOSE_STAGING) down
+prod-frontend-build: ## Build frontend for production
+	cd frontend && npm run build
+	@echo "✅ Frontend built to frontend/dist/"
 
 # ── Database ──────────────────────────────────────────────────────
 db-migrate: ## Run database migrations
-	$(COMPOSE) exec api alembic upgrade head
+	cd backend && $(ALEMBIC) upgrade head
 	@echo "✅ Migrations applied"
 
 db-migrate-down: ## Rollback last migration (DANGEROUS — use with caution)
 	@read -p "⚠️  Rollback last migration? [y/N]: " confirm; \
-	[ "$$confirm" = "y" ] && $(COMPOSE) exec api alembic downgrade -1 || echo "Cancelled"
+	[ "$$confirm" = "y" ] && cd backend && $(ALEMBIC) downgrade -1 || echo "Cancelled"
 
 db-seed: ## Seed database with development data
-	$(COMPOSE) exec api python -m app.scripts.seed_db
+	cd backend && $(PYTHON_CMD) -m app.scripts.seed_db
 
 db-backup: ## Create a PostgreSQL backup
 	@mkdir -p backups
 	@BACKUP_FILE="codeguard_$$(date +%Y%m%d_%H%M%S).sql.gz"; \
-	$(COMPOSE) exec -T postgres pg_dump -U codeguard_user codeguard | gzip > "backups/$$BACKUP_FILE"; \
+	pg_dump -U codeguard_user codeguard | gzip > "backups/$$BACKUP_FILE"; \
 	echo "✅ Backup saved: backups/$$BACKUP_FILE"
 
 db-restore: ## Restore PostgreSQL from backup file
 	@read -p "Enter backup file path (relative to backups/): " file; \
-	$(COMPOSE) exec -T postgres psql -U codeguard_user codeguard < <(gunzip -c "backups/$$file"); \
+	gunzip -c "backups/$$file" | psql -U codeguard_user codeguard; \
 	echo "✅ Database restored from: $$file"
 
 # ── Certificates ──────────────────────────────────────────────────
-certs-generate: ## Generate JWT and TLS certificates
+certs-generate: ## Generate JWT keys for RS256 authentication
 	@mkdir -p certs
 	@echo "🔐 Generating RS256 JWT keys..."
 	cd backend && bash generate_keys.sh ../certs
-	@echo "🔐 Generating self-signed TLS certificate (for dev/staging)..."
-	openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
-		-keyout certs/tls_private.key -out certs/fullchain.pem \
-		-subj "/CN=codeguard.local/O=CodeGuard AI/C=US" \
-		-addext "subjectAltName=DNS:localhost,DNS:codeguard.local" 2>/dev/null
-	@chmod 600 certs/tls_private.key certs/jwt_private.pem
-	@echo "✅ Certificates generated in certs/"
-
-certs-renew: ## Renew Let's Encrypt certificates
-	docker compose -f docker-compose.yml -f docker-compose.prod.yml \
-		run --rm certbot certonly \
-		--webroot --webroot-path /var/www/certbot \
-		-d $${DOMAIN:-codeguard.example.com} \
-		-d $${DOMAIN_WWW:-www.codeguard.example.com}
-	$(COMPOSE) exec frontend nginx -s reload
-	@echo "✅ Certificates renewed"
+	@chmod 600 certs/jwt_private.pem
+	@echo "✅ JWT keys generated in certs/"
 
 # ── Health Checks ─────────────────────────────────────────────────
 health: ## Quick health check
-	@echo "API:    $$(curl -sf http://localhost:8000/api/v1/health 2>/dev/null | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d.get("status","unknown"))' || echo '❌ unreachable')"
-	@echo "Frontend: $$(curl -sf -o /dev/null -w '%{http_code}' http://localhost/health 2>/dev/null || echo '❌ unreachable')"
+	@echo "API:    $$(curl -sf http://localhost:8000/health 2>/dev/null | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d.get("status","unknown"))' || echo '❌ unreachable')"
+	@echo "Redis:  $$(redis-cli ping 2>/dev/null || echo '❌ unreachable')"
 
 health-verbose: ## Detailed health check with all subsystems
 	@echo "═══ API Health ═══"
-	@curl -sf http://localhost:8000/api/v1/health | python3 -m json.tool 2>/dev/null || echo "❌ API unreachable"
+	@curl -sf http://localhost:8000/health | python3 -m json.tool 2>/dev/null || echo "❌ API unreachable"
 	@echo ""
 	@echo "═══ API Readiness ═══"
-	@curl -sf http://localhost:8000/api/v1/ready | python3 -m json.tool 2>/dev/null || echo "❌ API not ready"
+	@curl -sf http://localhost:8000/ready | python3 -m json.tool 2>/dev/null || echo "❌ API not ready"
 	@echo ""
-	@echo "═══ Frontend ═══"
-	@curl -sf -o /dev/null -w "HTTP %{http_code} (%{time_total}s)" http://localhost/health 2>/dev/null || echo "❌ Frontend unreachable"
+	@echo "═══ Workspace Health ═══"
+	@curl -sf http://localhost:8000/api/v1/scanner/workspace-health | python3 -m json.tool 2>/dev/null || echo "❌ Workspace check failed"
 	@echo ""
-	@echo "═══ Docker Services ═══"
-	@$(COMPOSE) ps --format "table {{.Name}}\t{{.Status}}\t{{.Ports}}"
+	@echo "═══ Redis ═══"
+	@redis-cli info server 2>/dev/null | grep redis_version || echo "❌ Redis unreachable"
 
 # ── Testing ───────────────────────────────────────────────────────
 test: test-backend test-frontend ## Run all tests
 
 test-backend: ## Run backend tests with coverage
-	cd backend && python -m pytest tests/ -v --tb=short \
+	cd backend && $(PYTHON_CMD) -m pytest tests/ -v --tb=short \
 		--cov=app --cov-report=term-missing --cov-fail-under=40
 
 test-frontend: ## Run frontend tests
@@ -203,7 +154,7 @@ test-e2e: ## Run end-to-end tests
 lint: lint-backend lint-frontend ## Run all linters
 
 lint-backend: ## Lint backend Python code
-	cd backend && ruff check app/ main.py
+	cd backend && $(PYTHON_CMD) -m ruff check app/ main.py
 
 lint-frontend: ## Lint frontend TypeScript/React code
 	cd frontend && npm run lint
@@ -220,33 +171,15 @@ security-audit: ## Run full security audit
 		backend/app frontend/src .env .env.production 2>/dev/null | \
 		grep -v "change_me\|CHANGE_ME\|test-secret\|$$" || echo "✅ No hardcoded secrets detected"
 
-# ── Logs ──────────────────────────────────────────────────────────
-logs: ## Show recent logs from all services
-	$(COMPOSE) logs --tail=50
-
-logs-follow: ## Follow all logs in real-time
-	$(COMPOSE) logs -f
-
-logs-api: ## Follow API logs
-	$(COMPOSE) logs -f api
-
-logs-celery: ## Follow Celery worker logs
-	$(COMPOSE) logs -f celery celery-beat
-
-logs-frontend: ## Follow nginx/frontend logs
-	$(COMPOSE) logs -f frontend
-
 # ── Cleanup ───────────────────────────────────────────────────────
-clean: ## Remove stopped containers and dangling images
-	$(COMPOSE) down --remove-orphans
-	docker image prune -f
+clean: ## Remove temporary files and caches
+	find backend -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null || true
+	find backend -type f -name "*.pyc" -delete 2>/dev/null || true
+	rm -rf frontend/dist frontend/.next 2>/dev/null || true
+	rm -rf /tmp/codeguard_uploads/* 2>/dev/null || true
+	@echo "✅ Cleaned temporary files and caches"
 
-clean-volumes: ## Remove all project volumes (DESTRUCTIVE — loses data)
-	@read -p "⚠️  This will delete all database and cache data. Continue? [y/N]: " confirm; \
-	[ "$$confirm" = "y" ] && $(COMPOSE) down -v || echo "Cancelled"
-
-clean-images: ## Remove all project images
-	$(COMPOSE) down --rmi all
-
-docker-prune: ## Full Docker system prune (global)
-	docker system prune -a --volumes -f
+clean-workspaces: ## Remove stale scan workspaces
+	rm -rf /tmp/codeguard_uploads/* 2>/dev/null || true
+	rm -rf /tmp/codeguard_uploads_fallback/* 2>/dev/null || true
+	@echo "✅ Cleaned scan workspaces"

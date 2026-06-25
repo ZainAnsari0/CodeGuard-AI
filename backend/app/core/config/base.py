@@ -8,9 +8,13 @@ Domain-specific settings are in separate modules:
   - email.py: SMTP and notification settings
 """
 
+import os
 from typing import List, Optional
 from pydantic_settings import BaseSettings
 from pydantic import field_validator, model_validator
+
+# Resolve project root .env path (four levels up: config/ -> core/ -> app/ -> backend/ -> project root)
+_PROJECT_ROOT_ENV = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "..", "..", ".env"))
 
 
 class BaseAppSettings(BaseSettings):
@@ -26,6 +30,10 @@ class BaseAppSettings(BaseSettings):
     FRONTEND_URL: str = "http://localhost:3000"
     UPLOAD_DIR: str = "/tmp/codeguard_uploads"
 
+    # Initial admin account (auto-created on startup if set)
+    ADMIN_EMAIL: Optional[str] = None
+    ADMIN_PASSWORD: Optional[str] = None
+
     @field_validator("LOG_LEVEL", mode="before")
     @classmethod
     def validate_log_level(cls, v: str) -> str:
@@ -35,7 +43,7 @@ class BaseAppSettings(BaseSettings):
         return v.upper()
 
     class Config:
-        env_file = ".env"
+        env_file = [".env", _PROJECT_ROOT_ENV]
         env_file_encoding = "utf-8"
         extra = "ignore"
 
@@ -46,7 +54,7 @@ class DatabaseSettings(BaseSettings):
     DATABASE_STATEMENT_TIMEOUT: int = 30
 
     class Config:
-        env_file = ".env"
+        env_file = [".env", _PROJECT_ROOT_ENV]
         env_file_encoding = "utf-8"
         extra = "ignore"
 
@@ -63,7 +71,10 @@ class SecuritySettings(BaseSettings):
     MAX_LOGIN_ATTEMPTS: int = 5
     LOCKOUT_DURATION_MINUTES: int = 15
     ALLOWED_HOSTS: List[str] = ["*"]
-    CORS_ORIGINS: List[str] = ["http://localhost:5173", "http://localhost:3000"]
+    CORS_ORIGINS: List[str] = [
+        "http://localhost:5173", "http://localhost:3000",
+        "http://127.0.0.1:5173", "http://127.0.0.1:3000",
+    ]
     CORS_ALLOW_CREDENTIALS: bool = True
     CORS_ALLOW_METHODS: List[str] = ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"]
     CORS_ALLOW_HEADERS: List[str] = ["Authorization", "Content-Type", "Accept", "X-Requested-With"]
@@ -89,7 +100,7 @@ class SecuritySettings(BaseSettings):
         return v
 
     class Config:
-        env_file = ".env"
+        env_file = [".env", _PROJECT_ROOT_ENV]
         env_file_encoding = "utf-8"
         extra = "ignore"
 
@@ -98,31 +109,43 @@ class AISettings(BaseSettings):
     """AI/ML provider configuration."""
     OPENAI_API_KEY: Optional[str] = None
     GROQ_API_KEY: Optional[str] = None
+    ANTHROPIC_API_KEY: Optional[str] = None
+    OPENROUTER_API_KEY: Optional[str] = None
+    OLLAMA_API_KEY: Optional[str] = None
     OLLAMA_URL: str = "http://localhost:11434"
     DEFAULT_MODEL: str = "llama3:8b"
     PROMPT_CACHE_ENABLED: bool = True
     PROMPT_CACHE_TTL: int = 3600
 
+    @model_validator(mode='after')
+    def _convert_empty_strings_to_none(self):
+        """Convert empty strings to None for API key fields."""
+        for field in ['OPENAI_API_KEY', 'GROQ_API_KEY', 'ANTHROPIC_API_KEY', 'OPENROUTER_API_KEY', 'OLLAMA_API_KEY']:
+            value = getattr(self, field)
+            if value == '':
+                setattr(self, field, None)
+        return self
+
     class Config:
-        env_file = ".env"
+        env_file = [".env", _PROJECT_ROOT_ENV]
         env_file_encoding = "utf-8"
         extra = "ignore"
 
 
 class ScannerSettings(BaseSettings):
-    """Scanner and container configuration."""
-    SCANNER_IMAGE: str = "codeguard-scanner:latest"
+    """Scanner and temporary workspace configuration."""
     SCANNER_TIMEOUT: int = 600
-    SCANNER_MEM_LIMIT: str = "1g"
     MAX_CONCURRENT_SCANS: int = 5
     MAX_FILE_SIZE: int = 10485760
     ALLOWED_EXTENSIONS: List[str] = [".py", ".js", ".ts", ".java", ".go", ".rs", ".c", ".cpp", ".h", ".hpp", ".swift"]
     MAX_ZIP_ENTRIES: int = 1000
     MAX_ZIP_DEPTH: int = 3
     MAX_ZIP_RATIO: float = 10.0
+    WORKSPACE_MAX_AGE_SECONDS: int = 3600
+    WORKSPACE_CLEANUP_ON_STARTUP: bool = True
 
     class Config:
-        env_file = ".env"
+        env_file = [".env", _PROJECT_ROOT_ENV]
         env_file_encoding = "utf-8"
         extra = "ignore"
 
@@ -139,7 +162,7 @@ class EmailSettings(BaseSettings):
     EMAIL_BACKEND: str = "console"
 
     class Config:
-        env_file = ".env"
+        env_file = [".env", _PROJECT_ROOT_ENV]
         env_file_encoding = "utf-8"
         extra = "ignore"
 
@@ -151,7 +174,7 @@ class RedisSettings(BaseSettings):
     REDIS_PASSWORD: Optional[str] = None
 
     class Config:
-        env_file = ".env"
+        env_file = [".env", _PROJECT_ROOT_ENV]
         env_file_encoding = "utf-8"
         extra = "ignore"
 

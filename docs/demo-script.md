@@ -23,7 +23,7 @@ This script walks through the core features of CodeGuard AI for a live demonstra
 - Note: Account creation is instant, no email verification required
 
 **Talking Point:**
-> "CodeGuard AI starts with a privacy-first approach. Accounts require minimal information, and all scanned code is processed in ephemeral Docker containers that are destroyed after analysis."
+> "CodeGuard AI starts with a privacy-first approach. Accounts require minimal information, and all scanned code is processed in ephemeral temporary workspaces that are automatically deleted after analysis."
 
 ### 2. Dashboard Overview (1 min)
 
@@ -46,7 +46,7 @@ This script walks through the core features of CodeGuard AI for a live demonstra
 - Real-time progress updates
 
 **Talking Point:**
-> "The scanning process uses AST-based deterministic analysis first, then enriches findings with AI explanations. All code runs in an isolated Docker container that's destroyed after scanning — your code never persists on our servers."
+> "The scanning process uses AST-based deterministic analysis first, then enriches findings with AI explanations. All code is parsed in an isolated temporary workspace that's destroyed after scanning — your code never persists on our servers."
 
 ### 4. Scan Results & Findings (3 min)
 
@@ -110,12 +110,13 @@ This script walks through the core features of CodeGuard AI for a live demonstra
 
 - The fallback chain will use deterministic rule-based explanations
 - Scans will still complete, but explanations will be more concise
-- **Talking Point:** "Our three-tier fallback chain ensures the platform remains functional even if all AI providers are down."
+- **Talking Point:** "Our multi-tier fallback chain ensures the platform remains functional even if all AI providers are down."
 
-### If Docker Is Unavailable
+### If Node.js Is Unavailable
 
-- Scans will fail gracefully with a clear error message
-- All other features (dashboard, knowledge base, report viewing) still work
+- JavaScript scanning falls back to regex-based pattern matching
+- Python scanning still works (uses built-in `ast` module)
+- All other features (dashboard, knowledge base, report viewing) work normally
 
 ### If Demo Environment Is Slow
 
@@ -136,4 +137,4 @@ This script walks through the core features of CodeGuard AI for a live demonstra
 
 ## Closing Statement
 
-> "CodeGuard AI bridges the gap between automated security tools and developer education. By combining deterministic AST analysis with AI-powered explanations, validated fixes, and a comprehensive knowledge base, we make security accessible to developers at every skill level — while maintaining strict privacy guarantees through ephemeral container isolation."
+> "CodeGuard AI bridges the gap between automated security tools and developer education. By combining deterministic AST analysis with AI-powered explanations, validated fixes, and a comprehensive knowledge base, we make security accessible to developers at every skill level — while maintaining strict privacy guarantees through ephemeral workspace isolation and a static analysis safety model."

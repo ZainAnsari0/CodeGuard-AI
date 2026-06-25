@@ -25,6 +25,7 @@ const ReportPage = lazy(() => import('./pages/ReportPage').then(m => ({ default:
 const ScanHistoryPage = lazy(() => import('./pages/ScanHistoryPage').then(m => ({ default: m.ScanHistoryPage })))
 const ClassesPage = lazy(() => import('./pages/ClassesPage').then(m => ({ default: m.ClassesPage })))
 const ClassMetricsPage = lazy(() => import('./pages/ClassMetricsPage').then(m => ({ default: m.ClassMetricsPage })))
+const MyClassesPage = lazy(() => import('./pages/MyClassesPage').then(m => ({ default: m.MyClassesPage })))
 const AdminUsersPage = lazy(() => import('./pages/AdminUsersPage').then(m => ({ default: m.AdminUsersPage })))
 const SystemHealthPage = lazy(() => import('./pages/SystemHealthPage').then(m => ({ default: m.SystemHealthPage })))
 const EventLogsPage = lazy(() => import('./pages/EventLogsPage').then(m => ({ default: m.EventLogsPage })))
@@ -49,6 +50,11 @@ function App() {
 
   const authPaths = ['/login', '/register', '/forgot-password', '/reset-password']
   const isAuthPage = authPaths.includes(location.pathname)
+
+  // Full-screen pages (no sidebar/header)
+  // Must match patterns like /scan/{scanId}/progress (with a scan ID between /scan/ and /progress)
+  const fullscreenPatterns = [/^\/scan\/[^\/]+\/progress$/]
+  const isFullscreenPage = fullscreenPatterns.some(p => p.test(location.pathname))
 
   // Public pages that don't need sidebar/header layout
   const publicPaths = ['/demo', '/share', '/landing']
@@ -106,6 +112,19 @@ function App() {
     )
   }
 
+  // Full-screen pages (no sidebar/header)
+  if (isFullscreenPage) {
+    return (
+      <ErrorBoundary>
+        <Suspense fallback={<PageLoader />}>
+          <Routes>
+            <Route path="/scan/:scanId/progress" element={<ProtectedRoute><ScanProgress /></ProtectedRoute>} />
+          </Routes>
+        </Suspense>
+      </ErrorBoundary>
+    )
+  }
+
   // Public pages with minimal layout (accessible to all users)
   if (isPublicPage) {
     return (
@@ -151,9 +170,9 @@ function App() {
                 <Route path="/knowledge-base/:slug" element={<ProtectedRoute><KnowledgeBasePage /></ProtectedRoute>} />
                 <Route path="/settings" element={<ProtectedRoute><Settings /></ProtectedRoute>} />
                 <Route path="/scan" element={<ProtectedRoute><ScanPage /></ProtectedRoute>} />
-                <Route path="/scan/:scanId/progress" element={<ProtectedRoute><ScanProgress /></ProtectedRoute>} />
                 <Route path="/scan/:scanId/report" element={<ProtectedRoute><ReportPage /></ProtectedRoute>} />
                 <Route path="/history" element={<ProtectedRoute><ScanHistoryPage /></ProtectedRoute>} />
+                <Route path="/my-classes" element={<ProtectedRoute><MyClassesPage /></ProtectedRoute>} />
 
                 {/* Instructor routes */}
                 <Route path="/classes" element={<ProtectedRoute allowedRoles={['instructor', 'admin']}><ClassesPage /></ProtectedRoute>} />

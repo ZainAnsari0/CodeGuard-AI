@@ -37,29 +37,33 @@ groups:
           summary: "Scan queue backlog"
           description: "{{ $value }} pending scans in queue (threshold: 50)"
 
-  # ── Infrastructure Alerts ───────────────────────────────────
-  - name: infrastructure
-    rules:
-      - alert: ContainerRestarted
-        expr: increase(container_restart_count[5m]) > 0
-        for: 1m
+      - alert: WorkspaceDiskSpaceHigh
+        expr: |
+          (
+            node_filesystem_avail_bytes{mountpoint="/tmp"}
+            / node_filesystem_size_bytes{mountpoint="/tmp"}
+          ) < 0.20
+        for: 5m
         labels:
           severity: warning
         annotations:
-          summary: "Container restarted"
-          description: "A container has restarted in the last 5 minutes"
+          summary: "Low disk space for scan workspaces"
+          description: "Scan workspace disk space below 20% remaining"
 
+  # ── Infrastructure Alerts ───────────────────────────────────
+  - name: infrastructure
+    rules:
       - alert: HighMemoryUsage
         expr: |
           (
-            container_memory_working_set_bytes / container_spec_memory_limit_bytes
-          ) > 0.85
+            node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes
+          ) < 0.15
         for: 10m
         labels:
           severity: warning
         annotations:
-          summary: "High memory usage"
-          description: "Container memory usage is {{ $value | humanizePercentage }} (threshold: 85%)"
+          summary: "High system memory usage"
+          description: "Available system memory is below 15%"
 
       - alert: DiskSpaceLow
         expr: |
@@ -73,6 +77,15 @@ groups:
         annotations:
           summary: "Low disk space"
           description: "Only {{ $value | humanizePercentage }} disk space remaining (threshold: 10%)"
+
+      - alert: ProcessDown
+        expr: up{job="codeguard-api"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "CodeGuard API process is down"
+          description: "The FastAPI application is not responding to health checks"
 
   # ── Database Alerts ──────────────────────────────────────────
   - name: database

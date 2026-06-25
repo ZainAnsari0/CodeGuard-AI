@@ -1,7 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useAuthStore } from '../store/authStore'
 import { apiFetch } from '../lib/api'
-import type { ClassInfo, Enrollment, ClassMetrics } from '../types'
+import type { ClassInfo, Enrollment, ClassMetrics, EnrolledClass } from '../types'
 
 export function useInstructorClasses() {
   const { isAuthenticated } = useAuthStore()
@@ -69,6 +69,45 @@ export function useRemoveStudent() {
       }),
     onSuccess: (_data, variables) => {
       queryClient.invalidateQueries({ queryKey: ['class-students', variables.classId] })
+    },
+  })
+}
+
+// --- Developer-facing hooks ---
+
+export function useMyClasses() {
+  const { isAuthenticated } = useAuthStore()
+  return useQuery<EnrolledClass[]>({
+    queryKey: ['my-classes'],
+    queryFn: () => apiFetch<EnrolledClass[]>('/api/v1/instructor/classes/mine'),
+    enabled: isAuthenticated,
+    staleTime: 2 * 60 * 1000,
+  })
+}
+
+export function useJoinClass() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (joinCode: string) =>
+      apiFetch('/api/v1/instructor/classes/join', {
+        method: 'POST',
+        body: JSON.stringify({ join_code: joinCode }),
+      }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['my-classes'] })
+    },
+  })
+}
+
+export function useLeaveClass() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (classId: string) =>
+      apiFetch(`/api/v1/instructor/classes/${classId}/leave`, {
+        method: 'DELETE',
+      }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['my-classes'] })
     },
   })
 }

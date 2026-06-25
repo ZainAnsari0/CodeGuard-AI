@@ -1,8 +1,8 @@
 import { create } from 'zustand'
 import type { Finding as FindingType } from '../types'
-import { API_BASE_URL, unwrap } from '../lib/api'
+import { apiClient } from '../shared/api/client'
 
-export type ScanStatus = 'pending' | 'parsing' | 'analyzing' | 'completed' | 'failed'
+export type ScanStatus = 'pending' | 'parsing' | 'analyzing' | 'running' | 'completed' | 'failed'
 
 export type { FindingType as Finding }
 
@@ -21,6 +21,7 @@ export interface ScanState {
   isUploading: boolean
   error: string | null
   _abortController: AbortController | null
+  _currentTimer: ReturnType<typeof setTimeout> | null
 
   uploadFiles: (files: File[], language: string) => Promise<{ success: boolean; scanId?: string; error?: string }>
   fetchScanStatus: (scanId: string, signal?: AbortSignal) => Promise<void>
@@ -42,6 +43,7 @@ export const useScanStore = create<ScanState>()((set, get) => ({
   isUploading: false,
   error: null,
   _abortController: null,
+  _currentTimer: null,
 
   uploadFiles: async (files: File[], language: string) => {
     set({ isUploading: true, error: null })
@@ -51,28 +53,13 @@ export const useScanStore = create<ScanState>()((set, get) => ({
       files.forEach((file) => formData.append('files', file))
       formData.append('language', language)
 
-      const response = await fetch(`${API_BASE_URL}/api/v1/scanner/upload`, {
-        method: 'POST',
-        credentials: 'include',
-        body: formData,
-      })
-
-      if (!response.ok) {
-        let errMsg = `Upload failed (HTTP ${response.status})`
-        try {
-          const raw = await response.json()
-          errMsg = (raw as Record<string, unknown>).detail as string || (raw as Record<string, unknown>).message as string || errMsg
-        } catch {
-          // Response wasn't JSON — use status-based message
-        }
-        throw new Error(errMsg)
-      }
-
-      const text = await response.text()
-      if (!text) throw new Error('Empty response from server')
-      const raw = JSON.parse(text)
-
-      const data = unwrap<{ scan_id: string; file_count: number; status: string }>(raw)
+      // Use apiClient.postForm() which includes 401 auto-refresh logic.
+      // Previously used raw fetch() which bypassed token refresh, causing
+      // "Upload failed (HTTP 401)" when the access token expired.
+      const data = await apiClient.postForm<{ scan_id: string; file_count: number; status: string }>(
+        '/api/v1/scanner/upload',
+        formData,
+      )
 
       set({
         currentScanId: data.scan_id,
@@ -91,28 +78,28 @@ export const useScanStore = create<ScanState>()((set, get) => ({
     }
   },
 
-  fetchScanStatus: async (scanId: string, signal?: AbortSignal) => {
-    try {
-      const response = await fetch(`${API_BASE_URL}/api/v1/scanner/${scanId}/status`, {
-        credentials: 'include',
-        signal,
-      })
-      if (!response.ok) throw new Error('Status check failed')
-      const text = await response.text()
-      if (!text) return
-      const data = unwrap<Record<string, unknown>>(JSON.parse(text))
+   fetchScanStatus: async (scanId: string, signal?: AbortSignal) => {
+     try {
+       const data = await apiClient.get<Record<string, unknown>>(
+         `/api/v1/scanner/${scanId}/status`,
+       )
 
-      set({
-        scanStatus: data.status as ScanStatus,
-        progress: (data.progress as number) || 0,
-        stage: (data.stage as string) || null,
-        totalFiles: (data.total_files as number) || 0,
-      })
-    } catch (err) {
-      if (err instanceof DOMException && err.name === 'AbortError') return
-      set({ error: 'Network error while checking scan status' })
-    }
-  },
+       set({
+         scanStatus: data.status as ScanStatus,
+         progress: (data.progress as number) || 0,
+         stage: (data.stage as string) || null,
+         totalFiles: (data.total_files as number) || 0,
+         error: null,
+       })
+     } catch (err) {
+       if (err instanceof DOMException && err.name === 'AbortError') return
+       // Silently ignore 401 refresh redirects during polling
+       if (err instanceof Error && err.message.includes('Session expired')) return
+       // Use the actual error message when available
+       const errorMsg = err instanceof Error ? err.message : 'Network error while checking scan status'
+       set({ error: errorMsg })
+     }
+   },
 
   pollScanStatus: async (scanId: string) => {
     // Cancel any previous polling
@@ -134,13 +121,12 @@ export const useScanStore = create<ScanState>()((set, get) => ({
       await get().fetchScanStatus(scanId, controller.signal)
       const status = get().scanStatus
       if (status && status !== 'completed' && status !== 'failed' && !controller.signal.aborted) {
-        await new Promise<void>((resolve) => {
-          const timer = setTimeout(resolve, POLL_INTERVAL_MS)
-          // Store timer so cancelPolling can clear it
-          const state = get() as Record<string, unknown>
-          state._currentTimer = timer
-        })
-        await poll()
+        // Wait POLL_INTERVAL_MS before polling again
+        const timer = setTimeout(() => {
+          set({ _currentTimer: null })
+          poll()
+        }, POLL_INTERVAL_MS)
+        set({ _currentTimer: timer })
       }
     }
 
@@ -148,38 +134,35 @@ export const useScanStore = create<ScanState>()((set, get) => ({
   },
 
   cancelPolling: () => {
-    const state = get() as Record<string, unknown>
+    const { _abortController, _currentTimer } = get()
     // Abort any in-flight fetch
-    if (state._abortController && (state._abortController as AbortController)) {
-      ;(state._abortController as AbortController).abort()
+    if (_abortController) {
+      _abortController.abort()
     }
     // Clear any pending timer
-    if (state._currentTimer && typeof state._currentTimer === 'number') {
-      clearTimeout(state._currentTimer as ReturnType<typeof setTimeout>)
+    if (_currentTimer !== null) {
+      clearTimeout(_currentTimer)
     }
-    set({ _abortController: null })
+    set({ _abortController: null, _currentTimer: null })
   },
 
-  fetchScanResults: async (scanId: string) => {
-    try {
-      const response = await fetch(`${API_BASE_URL}/api/v1/scanner/${scanId}/results`, {
-        credentials: 'include',
-      })
-      if (!response.ok) throw new Error('Failed to fetch results')
-      const text = await response.text()
-      if (!text) return
-      const data = unwrap<Record<string, unknown>>(JSON.parse(text))
+   fetchScanResults: async (scanId: string) => {
+     try {
+       const data = await apiClient.get<Record<string, unknown>>(
+         `/api/v1/scanner/${scanId}/results`,
+       )
 
-      set({
-        findings: (data.findings as FindingType[]) || [],
-        codeFiles: (data.code_files as Record<string, string>) || {},
-        scanStatus: data.status as ScanStatus,
-        totalFiles: (data.total_files as number) || 0,
-      })
-    } catch {
-      set({ error: 'Network error while fetching scan results' })
-    }
-  },
+       set({
+         findings: (data.findings as FindingType[]) || [],
+         codeFiles: (data.code_files as Record<string, string>) || {},
+         scanStatus: data.status as ScanStatus,
+         totalFiles: (data.total_files as number) || 0,
+         error: null,
+       })
+     } catch {
+       set({ error: 'Network error while fetching scan results' })
+     }
+   },
 
   clearScan: () => {
     get().cancelPolling()
@@ -194,6 +177,7 @@ export const useScanStore = create<ScanState>()((set, get) => ({
       isUploading: false,
       error: null,
       _abortController: null,
+      _currentTimer: null,
     })
   },
 

@@ -49,6 +49,7 @@ docker-compose.override.yml
 backups/
 *.sql.gz
 *.dump
+*.bak
 
 # Logs
 *.log
@@ -65,7 +66,43 @@ frontend/coverage/
 # Database
 *.db
 *.sqlite3
+backend/codeguard.db
 
 # Monitoring data
 monitoring/grafana/data/
 prometheus_data/
+
+# Personal documentation & design (local only)
+documentation/
+stitch-designs/
+docs/design/
+
+# Personal/local markdown files
+FINAL_AGILE_DESIGN_SPECIFICATION.md
+PROJECT_OVERVIEW.md
+REMAINING_DEPLOYMENT_STEPS.md
+STITCH_DESIGN_PROMPT.md
+BUG_REPORT.md
+AUDIT_REPORT.md
+bug.md
+performance_scalability.md
+prompt.md
+
+# Tool config folders (local only)
+.claude/
+.playwright-mcp/
+
+# Local test folders & scripts
+large_files_test/
+frontend/test-results/
+scripts/
+generate_large_test_files.py
+trigger_scan.py
+backend/trigger_scan.py
+
+# Local images
+landing-page-redesigned.png
+
+# SQLite WAL/SHM files
+*.db-shm
+*.db-wal

@@ -15,3 +15,6 @@ __all__ = [
     "User", "Project", "CodeFile", "Analysis", "Finding", "FixSuggestion",
     "Class_", "Enrollment", "SystemEvent", "KBArticle", "ShareToken",
 ]
+
+# Register composite indexes
+import app.db.indexes

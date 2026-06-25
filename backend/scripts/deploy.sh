@@ -15,21 +15,20 @@ PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 # ── Configuration ──────────────────────────────────────────
 ENV="${1:-staging}"
 ROLLBACK="${2:-}"
-COMPOSE_CMD="docker compose"
+APP_DIR="${APP_DIR:-/opt/codeguard}"
+VENV_DIR="${APP_DIR}/backend/venv"
 
 if [ "$ENV" != "staging" ] && [ "$ENV" != "production" ]; then
     echo "Usage: $0 [staging|production] [--rollback]"
     exit 1
 fi
 
-# Production uses the prod compose overlay
+# Set environment-specific values
 if [ "$ENV" = "production" ]; then
-    COMPOSE_FILES="-f docker-compose.yml -f docker-compose.prod.yml"
-    ENV_FILE="--env-file .env.production"
+    ENV_FILE=".env.production.local"
     HEALTH_URL="https://localhost/health"
 else
-    COMPOSE_FILES="-f docker-compose.yml"
-    ENV_FILE=""
+    ENV_FILE=".env.staging"
     HEALTH_URL="http://localhost:8000/health"
 fi
 
@@ -59,8 +58,13 @@ if [ "$ROLLBACK" = "--rollback" ]; then
     echo "  Rolling back to: ${PREV_TAG}"
 
     git checkout "$PREV_TAG"
-    ${COMPOSE_CMD} ${COMPOSE_FILES} ${ENV_FILE} build
-    ${COMPOSE_CMD} ${COMPOSE_FILES} ${ENV_FILE} up -d
+
+    # Reinstall and rebuild
+    cd backend && source venv/bin/activate && pip install -r requirements.txt -q
+    cd .. && cd frontend && npm ci && npm run build
+
+    # Restart services
+    sudo systemctl restart codeguard-api codeguard-celery codeguard-celery-beat
 
     echo "Rollback complete. Monitor health at: ${HEALTH_URL}"
     exit 0
@@ -69,30 +73,37 @@ fi
 # ── Pre-deploy checks ──────────────────────────────────────
 echo "[1/7] Running pre-deploy checks..."
 
-# Check docker
-if ! command -v docker &>/dev/null; then
-    echo "ERROR: docker not found. Please install Docker."
+# Check Python
+if ! command -v python3 &>/dev/null; then
+    echo "ERROR: python3 not found."
     exit 1
 fi
-echo "  ✓ docker found"
+echo "  ✓ python3 found"
 
-# Check docker compose
-if ! ${COMPOSE_CMD} version &>/dev/null; then
-    echo "ERROR: docker compose not found."
-    exit 1
+# Check Node.js
+if ! command -v node &>/dev/null; then
+    echo "WARNING: node not found. JavaScript scanning will fall back to regex."
+else
+    echo "  ✓ node found"
 fi
-echo "  ✓ docker compose found"
+
+# Check PostgreSQL
+if ! systemctl is-active --quiet postgresql 2>/dev/null; then
+    echo "WARNING: PostgreSQL may not be running."
+else
+    echo "  ✓ PostgreSQL running"
+fi
 
 # Check .env.production for production
 if [ "$ENV" = "production" ]; then
-    if [ ! -f ".env.production" ]; then
-        echo "ERROR: .env.production not found. Create it from .env.production template."
+    if [ ! -f "${ENV_FILE}" ]; then
+        echo "ERROR: ${ENV_FILE} not found. Create it from .env.production template."
         exit 1
     fi
 
     # Check for default passwords
-    if grep -q "CHANGE_ME" .env.production 2>/dev/null; then
-        echo "WARNING: .env.production contains placeholder passwords. Update before deploying."
+    if grep -q "CHANGE_ME" "${ENV_FILE}" 2>/dev/null; then
+        echo "WARNING: ${ENV_FILE} contains placeholder passwords. Update before deploying."
         echo "  Change all CHANGE_ME values to strong passwords."
         read -p "Continue anyway? [y/N] " -n 1 -r
         echo ""
@@ -100,12 +111,12 @@ if [ "$ENV" = "production" ]; then
             exit 1
         fi
     fi
-    echo "  ✓ .env.production found"
+    echo "  ✓ ${ENV_FILE} found"
 fi
 
 # Check TLS certs for production
 if [ "$ENV" = "production" ]; then
-    if [ ! -f "certs/tls_cert.pem" ] || [ ! -f "certs/tls_private.key" ]; then
+    if [ ! -f "certs/tls_cert.pem" ] && [ ! -f "certs/fullchain.pem" ]; then
         echo "WARNING: TLS certificates not found in certs/."
         echo "  Run: bash backend/scripts/setup-tls.sh"
         read -p "Continue without TLS? [y/N] " -n 1 -r
@@ -128,25 +139,24 @@ RELEASE_TAG="v$(cat backend/app/core/config.py 2>/dev/null | grep PROJECT_VERSIO
 echo "  Release tag: ${RELEASE_TAG}"
 git tag "$RELEASE_TAG" 2>/dev/null || true
 
-# ── Build images ────────────────────────────────────────────
-echo "[3/7] Building Docker images..."
-${COMPOSE_CMD} ${COMPOSE_FILES} ${ENV_FILE} build
+# ── Install dependencies ────────────────────────────────────
+echo "[3/7] Installing dependencies..."
+cd backend
+source venv/bin/activate 2>/dev/null || { python3 -m venv venv && source venv/bin/activate; }
+pip install -r requirements.txt -q
+cd ..
+cd frontend && npm ci && npm run build && cd ..
 
 # ── Database migration ─────────────────────────────────────
 echo "[4/7] Running database migration..."
-${COMPOSE_CMD} ${COMPOSE_FILES} ${ENV_FILE} up -d postgres redis
-sleep 5
-
-${COMPOSE_CMD} ${COMPOSE_FILES} ${ENV_FILE} up -d api
-sleep 10
-
-# Run Alembic migration
-docker exec codeguard_api alembic upgrade head 2>/dev/null || \
-    echo "  (Alembic migration skipped — may not be needed)"
+cd backend
+source venv/bin/activate
+alembic upgrade head 2>/dev/null || echo "  (Alembic migration skipped — may not be needed)"
+cd ..
 
 # ── Deploy all services ─────────────────────────────────────
-echo "[5/7] Starting all services..."
-${COMPOSE_CMD} ${COMPOSE_FILES} ${ENV_FILE} up -d
+echo "[5/7] Restarting services..."
+sudo systemctl restart codeguard-api codeguard-celery codeguard-celery-beat
 
 # ── Wait for services ──────────────────────────────────────
 echo "[6/7] Waiting for services to become healthy..."
@@ -167,7 +177,7 @@ done
 
 if [ $RETRIES -eq $MAX_RETRIES ]; then
     echo "  ✗ Health check failed after ${MAX_RETRIES} retries"
-    echo "  Check logs: ${COMPOSE_CMD} ${COMPOSE_FILES} ${ENV_FILE} logs api"
+    echo "  Check logs: journalctl -u codeguard-api -n 50"
     exit 1
 fi
 
@@ -187,7 +197,7 @@ FRONTEND_URL=$(echo "$HEALTH_URL" | sed 's|/health$|/|')
 if [ "$ENV" = "production" ]; then
     FRONTEND_STATUS=$(curl -sf -o /dev/null -w "%{http_code}" "https://localhost/" 2>/dev/null || echo "000")
 else
-    FRONTEND_STATUS=$(curl -sf -o /dev/null -w "%{http_code}" "http://localhost:3000/" 2>/dev/null || echo "000")
+    FRONTEND_STATUS=$(curl -sf -o /dev/null -w "%{http_code}" "http://localhost:5173/" 2>/dev/null || echo "000")
 fi
 
 if [ "$FRONTEND_STATUS" = "200" ]; then
@@ -203,8 +213,4 @@ echo " Deployment complete!"
 echo " Environment: ${ENV}"
 echo " Tag: ${RELEASE_TAG}"
 echo " Health: ${HEALTH_URL}"
-if [ "$ENV" = "production" ]; then
-    echo " Grafana: http://localhost:3001"
-    echo " Prometheus: http://localhost:9090"
-fi
 echo "=========================================="

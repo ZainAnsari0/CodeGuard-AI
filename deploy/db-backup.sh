@@ -10,14 +10,20 @@
 #
 # Environment:
 #   BACKUP_DIR      — Local backup directory (default: ./backups)
-#   COMPOSE_CMD     — Docker compose command
-#   RETENTION_DAYS  — Days to keep backups (default: 30)
+#   RETENTION_DAYS   — Days to keep backups (default: 30)
+#   POSTGRES_HOST   — PostgreSQL host (default: localhost)
+#   POSTGRES_PORT   — PostgreSQL port (default: 5432)
+#   POSTGRES_DB     — Database name (default: codeguard)
+#   POSTGRES_USER   — Database user (default: codeguard_user)
 # ═══════════════════════════════════════════════════════════════════
 set -euo pipefail
 
 BACKUP_DIR="${BACKUP_DIR:-./backups}"
-COMPOSE_CMD="${COMPOSE_CMD:-docker compose -f docker-compose.yml -f docker-compose.prod.yml}"
 RETENTION_DAYS="${RETENTION_DAYS:-30}"
+POSTGRES_HOST="${POSTGRES_HOST:-localhost}"
+POSTGRES_PORT="${POSTGRES_PORT:-5432}"
+POSTGRES_DB="${POSTGRES_DB:-codeguard}"
+POSTGRES_USER="${POSTGRES_USER:-codeguard_user}"
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)
 COMPRESS=true
 UPLOAD=false
@@ -36,16 +42,22 @@ mkdir -p "$BACKUP_DIR"
 
 echo "🗄️  Starting database backup..."
 echo "   Timestamp: $TIMESTAMP"
+echo "   Host: $POSTGRES_HOST:$POSTGRES_PORT"
+echo "   Database: $POSTGRES_DB"
 
 if [ "$COMPRESS" = true ]; then
     BACKUP_FILE="$BACKUP_DIR/codeguard_${TIMESTAMP}.sql.gz"
-    $COMPOSE_CMD exec -T postgres \
-        pg_dump -U codeguard_user -d codeguard --format=plain --no-owner --no-privileges \
+    PGPASSWORD="${PGPASSWORD:-}" pg_dump \
+        -h "$POSTGRES_HOST" -p "$POSTGRES_PORT" \
+        -U "$POSTGRES_USER" -d "$POSTGRES_DB" \
+        --format=plain --no-owner --no-privileges \
         2>/dev/null | gzip > "$BACKUP_FILE"
 else
     BACKUP_FILE="$BACKUP_DIR/codeguard_${TIMESTAMP}.sql"
-    $COMPOSE_CMD exec -T postgres \
-        pg_dump -U codeguard_user -d codeguard --format=plain --no-owner --no-privileges \
+    PGPASSWORD="${PGPASSWORD:-}" pg_dump \
+        -h "$POSTGRES_HOST" -p "$POSTGRES_PORT" \
+        -U "$POSTGRES_USER" -d "$POSTGRES_DB" \
+        --format=plain --no-owner --no-privileges \
         2>/dev/null > "$BACKUP_FILE"
 fi
 

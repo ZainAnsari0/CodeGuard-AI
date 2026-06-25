@@ -44,11 +44,11 @@ class Class_(SQLModel, table=True):
     )
     created_at: Optional[datetime] = Field(
         default_factory=lambda: datetime.now(timezone.utc),
-        sa_column=Column(DateTime, server_default=func.now()),
+        sa_column=Column(DateTime(timezone=True), server_default=func.now()),
     )
     updated_at: Optional[datetime] = Field(
         default_factory=lambda: datetime.now(timezone.utc),
-        sa_column=Column(DateTime, onupdate=func.now()),
+        sa_column=Column(DateTime(timezone=True), onupdate=func.now()),
     )
 
     # Relationships
@@ -81,7 +81,7 @@ class Enrollment(SQLModel, table=True):
     )
     enrolled_at: Optional[datetime] = Field(
         default_factory=lambda: datetime.now(timezone.utc),
-        sa_column=Column(DateTime, server_default=func.now()),
+        sa_column=Column(DateTime(timezone=True), server_default=func.now()),
     )
 
     # Relationships

@@ -2,17 +2,18 @@ import { useState, useMemo } from 'react'
 import { useParams } from 'react-router-dom'
 import {
   Shield, ArrowLeft, FileCode, Bug, AlertTriangle,
-  CheckCircle, Clock, ChevronRight, Loader, RefreshCw
+  CheckCircle, ChevronRight, Loader, RefreshCw, Home
 } from 'lucide-react'
 import { Link } from 'react-router-dom'
 import { useScanResults } from '../hooks/useScanResults'
 import { useAuthStore } from '../store/authStore'
+import { apiClient } from '../shared/api/client'
 import { CodeViewer } from '../components/report/CodeViewer'
 import { FindingsPanel } from '../components/report/FindingsPanel'
 import { FindingCard } from '../components/report/FindingCard'
 import { ReportExport } from '../components/report/ReportExport'
 import type { Finding } from '../types'
-import { SEVERITY_COLORS, getLanguageFromFilename } from '../utils/severity'
+import { SEVERITY_COLORS, SEVERITY_BADGE_CLASSES, getLanguageFromFilename } from '../utils/severity'
 
 export function ReportPage() {
   const { scanId } = useParams<{ scanId: string }>()
@@ -32,7 +33,6 @@ export function ReportPage() {
     [data?.findings, currentFile]
   )
 
-  // Detect language from file extension
   const language = useMemo(() => getLanguageFromFilename(currentFile), [currentFile])
 
   const counts = useMemo(() => {
@@ -47,8 +47,11 @@ export function ReportPage() {
     return (
       <div className="flex items-center justify-center min-h-[60vh]">
         <div className="text-center">
-          <Loader className="w-8 h-8 text-brand-400 animate-spin mx-auto mb-4" />
-          <p className="text-text-secondary">Loading scan results...</p>
+          <div className="relative w-16 h-16 mx-auto mb-4">
+            <div className="absolute inset-0 rounded-full bg-primary/10 animate-pulse-slow" />
+            <Loader className="w-8 h-8 text-primary animate-spin absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2" />
+          </div>
+          <p className="text-body-md text-on-surface-variant">Loading scan results...</p>
         </div>
       </div>
     )
@@ -59,9 +62,9 @@ export function ReportPage() {
       <div className="flex items-center justify-center min-h-[60vh]">
         <div className="glass-card p-8 text-center max-w-md">
           <AlertTriangle className="w-12 h-12 text-severity-critical mx-auto mb-4" />
-          <h2 className="text-xl font-bold text-text-primary mb-2">Failed to Load Results</h2>
-          <p className="text-text-secondary mb-4">{error?.message || 'Scan results could not be retrieved.'}</p>
-          <Link to="/dashboard" className="text-brand-400 hover:text-brand-300 text-sm font-medium">
+          <h2 className="text-headline-sm font-semibold text-on-surface mb-2">Failed to Load Results</h2>
+          <p className="text-body-sm text-on-surface-variant mb-4">{error?.message || 'Scan results could not be retrieved.'}</p>
+          <Link to="/dashboard" className="text-label-md text-primary hover:text-brand-300 transition-colors">
             Back to Dashboard
           </Link>
         </div>
@@ -70,53 +73,59 @@ export function ReportPage() {
   }
 
   return (
-    <div className="space-y-4 animate-fade-in">
-      {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+    <div className="flex flex-col h-[calc(100vh-var(--spacing-header)-2rem)] animate-fade-in">
+      {/* ── Breadcrumb header with severity badges ── */}
+      <div className="glass-panel px-5 py-3 mb-0 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 rounded-b-none border-b-0">
         <div className="flex items-center gap-3">
-          <Link to="/history" className="p-2 rounded-lg hover:bg-bg-tertiary transition-colors text-text-muted hover:text-text-primary">
-            <ArrowLeft className="w-5 h-5" />
+          <Link to="/history" className="p-2 rounded-lg hover:bg-surface-high transition-colors text-on-surface-variant hover:text-on-surface">
+            <ArrowLeft className="w-4 h-4" />
           </Link>
-          <div>
-            <h1 className="text-2xl font-bold text-text-primary">Scan Report</h1>
-            <p className="text-text-secondary text-sm mt-0.5">
-              Scan <span className="font-mono text-brand-400">{scanId?.substring(0, 8)}...</span>
-              {data.status === 'completed' && <CheckCircle className="w-3.5 h-3.5 text-success inline ml-2" />}
-              {data.status === 'failed' && <AlertTriangle className="w-3.5 h-3.5 text-severity-critical inline ml-2" />}
-            </p>
-          </div>
+          <nav className="flex items-center gap-1.5 text-label-sm text-on-surface-variant">
+            <Link to="/dashboard" className="hover:text-primary transition-colors flex items-center gap-1">
+              <Home className="w-3 h-3" />
+              Dashboard
+            </Link>
+            <ChevronRight className="w-3 h-3 opacity-40" />
+            <Link to="/history" className="hover:text-primary transition-colors">History</Link>
+            <ChevronRight className="w-3 h-3 opacity-40" />
+            <span className="text-on-surface font-medium">Report</span>
+          </nav>
+          <span className="hidden sm:inline-block font-mono text-label-sm text-primary ml-1 bg-primary/10 px-2 py-0.5 rounded-md">
+            {scanId?.substring(0, 8)}
+          </span>
+          {data.status === 'completed' && <CheckCircle className="w-4 h-4 text-success" />}
+          {data.status === 'failed' && <AlertTriangle className="w-4 h-4 text-severity-critical" />}
         </div>
 
         {/* Severity summary */}
-        <div className="flex items-center gap-4">
+        <div className="flex items-center gap-3 flex-wrap">
           {(['critical', 'high', 'medium', 'low'] as const).map(sev => (
             counts[sev] > 0 && (
-              <div key={sev} className="text-center">
-                <p className={`text-xl font-bold font-mono ${SEVERITY_COLORS[sev]}`}>{counts[sev]}</p>
-                <p className="text-[10px] text-text-muted uppercase tracking-wider">{sev}</p>
-              </div>
+              <span key={sev} className={`${SEVERITY_BADGE_CLASSES[sev]} px-2.5 py-1 rounded-md text-label-sm font-mono font-semibold`}>
+                {counts[sev]} {sev.charAt(0).toUpperCase() + sev.slice(1)}
+              </span>
             )
           ))}
-          <div className="text-center ml-2">
-            <p className="text-xl font-bold font-mono text-text-primary">{data.findings.length}</p>
-            <p className="text-[10px] text-text-muted uppercase tracking-wider">Total</p>
-          </div>
-          <div className="flex items-center gap-2 ml-4">
+          <span className="text-label-sm text-on-surface-variant ml-1">
+            {(data?.findings || []).length} total
+          </span>
+          <div className="flex items-center gap-2 ml-2">
             <ReportExport data={data} scanId={scanId!} />
             <button
               onClick={async () => {
-                const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000'
-                const res = await fetch(`${API_BASE_URL}/api/v1/scanner/${scanId}/rescan`, {
-                  method: 'POST',
-                  headers: { 'Content-Type': 'application/json' },
-                  credentials: 'include',
-                })
-                const result = await res.json()
-                if (result.success && result.data?.new_analysis_id) {
-                  window.location.href = `/scan/${result.data.new_analysis_id}/progress`
+                try {
+                  const result = await apiClient.post<{ new_analysis_id: string }>(
+                    `/api/v1/scanner/${scanId}/rescan`,
+                    {},
+                  )
+                  if (result.new_analysis_id) {
+                    window.location.href = `/scan/${result.new_analysis_id}/progress`
+                  }
+                } catch {
+                  // apiClient handles 401 auto-refresh; other errors silently ignored
                 }
               }}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-brand-500/10 border border-brand-500/30 text-brand-400 hover:bg-brand-500/20 transition-all"
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-label-sm font-medium bg-primary/10 border border-primary/30 text-primary hover:bg-primary/20 transition-all"
               title="Re-scan after applying fixes"
             >
               <RefreshCw className="w-3.5 h-3.5" />
@@ -126,58 +135,69 @@ export function ReportPage() {
         </div>
       </div>
 
-      {/* File tabs */}
+      {/* ── File tab bar ── */}
       {fileNames.length > 0 && (
-        <div className="flex gap-1 overflow-x-auto pb-1">
-          {fileNames.map(name => (
-            <button
-              key={name}
-              onClick={() => { setActiveFile(name); setActiveFinding(null); }}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium whitespace-nowrap transition-all
-                ${currentFile === name
-                  ? 'bg-brand-500/15 text-brand-400 border border-brand-500/30'
-                  : 'bg-bg-primary border border-border-default text-text-muted hover:text-text-secondary'}`}
-            >
-              <FileCode className="w-3.5 h-3.5" />
-              {name}
-              {(data.findings || []).filter(f => f.file_path === name || f.file_path?.endsWith(name)).length > 0 && (
-                <span className="ml-1 px-1 py-0.5 rounded text-[10px] font-mono bg-severity-high/10 text-severity-high">
-                  {(data.findings || []).filter(f => f.file_path === name || f.file_path?.endsWith(name)).length}
-                </span>
-              )}
-            </button>
-          ))}
+        <div className="flex gap-1 overflow-x-auto px-5 py-2 bg-surface-low border-b border-outline-variant/30 scrollbar-thin">
+          {fileNames.map(name => {
+            const fileFindings = (data.findings || []).filter(f => f.file_path === name || f.file_path?.endsWith(name))
+            const isActive = currentFile === name
+            return (
+              <button
+                key={name}
+                onClick={() => { setActiveFile(name); setActiveFinding(null); }}
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-label-sm font-medium whitespace-nowrap transition-all shrink-0
+                  ${isActive
+                    ? 'bg-surface-bright text-primary shadow-sm border border-primary/30'
+                    : 'bg-surface-container text-on-surface-variant border border-outline-variant/30 hover:text-on-surface hover:bg-surface-high'
+                  }`}
+              >
+                <FileCode className="w-3.5 h-3.5" />
+                <span className="font-mono">{name}</span>
+                {fileFindings.length > 0 && (
+                  <span className="ml-0.5 px-1.5 py-0.5 rounded text-label-sm font-mono badge-high">
+                    {fileFindings.length}
+                  </span>
+                )}
+              </button>
+            )
+          })}
         </div>
       )}
 
-      {/* Mobile tab toggle */}
-      <div className="flex lg:hidden border-b border-border-default">
+      {/* ── Mobile tab toggle ── */}
+      <div className="flex lg:hidden bg-surface-low border-b border-outline-variant/30">
         <button
           onClick={() => setMobileTab('findings')}
-          className={`flex-1 py-2 text-sm font-medium text-center transition-colors ${
+          className={`flex-1 py-2.5 text-label-md font-medium text-center transition-colors relative ${
             mobileTab === 'findings'
-              ? 'text-brand-400 border-b-2 border-brand-400'
-              : 'text-text-muted hover:text-text-secondary'
+              ? 'text-primary'
+              : 'text-on-surface-variant hover:text-on-surface'
           }`}
         >
-          Findings ({data.findings.length})
+          Findings ({(data?.findings || []).length})
+          {mobileTab === 'findings' && (
+            <span className="absolute bottom-0 left-1/2 -translate-x-1/2 w-12 h-0.5 bg-primary rounded-full" />
+          )}
         </button>
         <button
           onClick={() => setMobileTab('code')}
-          className={`flex-1 py-2 text-sm font-medium text-center transition-colors ${
+          className={`flex-1 py-2.5 text-label-md font-medium text-center transition-colors relative ${
             mobileTab === 'code'
-              ? 'text-brand-400 border-b-2 border-brand-400'
-              : 'text-text-muted hover:text-text-secondary'
+              ? 'text-primary'
+              : 'text-on-surface-variant hover:text-on-surface'
           }`}
         >
           Code
+          {mobileTab === 'code' && (
+            <span className="absolute bottom-0 left-1/2 -translate-x-1/2 w-12 h-0.5 bg-primary rounded-full" />
+          )}
         </button>
       </div>
 
-      {/* Main split-pane layout */}
-      <div className="grid grid-cols-1 lg:grid-cols-[1fr_380px] gap-4 min-h-[70vh]">
-        {/* Left: Code viewer — hidden on mobile when on findings tab */}
-        <div className={`min-h-[400px] ${mobileTab !== 'code' ? 'hidden lg:block' : ''}`}>
+      {/* ── Split-pane layout (55/45) ── */}
+      <div className="flex-1 grid grid-cols-1 lg:grid-cols-[55fr_45fr] min-h-0 overflow-hidden">
+        {/* Left: Code viewer */}
+        <div className={`min-h-0 overflow-hidden ${mobileTab !== 'code' ? 'hidden lg:flex lg:flex-col' : 'flex flex-col'}`}>
           {currentCode ? (
             <CodeViewer
               code={currentCode}
@@ -191,37 +211,47 @@ export function ReportPage() {
               }}
             />
           ) : (
-            <div className="h-full glass-card flex items-center justify-center">
+            <div className="h-full glass-panel flex items-center justify-center m-2 rounded-lg">
               <div className="text-center">
-                <FileCode className="w-12 h-12 text-text-muted mx-auto mb-3" />
-                <p className="text-text-secondary">No code available for display</p>
+                <FileCode className="w-14 h-14 text-text-muted mx-auto mb-3 opacity-40" />
+                <p className="text-body-md text-on-surface-variant">No code available for display</p>
               </div>
             </div>
           )}
         </div>
 
-        {/* Right: Findings panel — hidden on mobile when on code tab */}
-        <div className={`glass-card overflow-hidden flex flex-col min-h-[400px] ${mobileTab !== 'findings' ? 'hidden lg:flex' : ''}`}>
+        {/* Right: Findings panel */}
+        <div className={`glass-panel rounded-l-none border-l-0 min-h-0 overflow-hidden flex flex-col
+          ${mobileTab !== 'findings' ? 'hidden lg:flex' : 'flex'}`}
+        >
           {activeFinding ? (
             <>
               <button
                 onClick={() => setActiveFinding(null)}
-                className="px-4 py-2 border-b border-border-default text-xs text-brand-400 hover:text-brand-300 flex items-center gap-1 transition-colors"
+                className="px-4 py-2.5 border-b border-outline-variant/30 text-label-sm text-primary hover:text-brand-300 flex items-center gap-1.5 transition-colors bg-surface-low"
               >
-                <ArrowLeft className="w-3 h-3" /> Back to findings
+                <ArrowLeft className="w-3.5 h-3.5" /> Back to findings
               </button>
-              <FindingCard
-                finding={activeFinding}
-                scanId={scanId!}
-              />
+              <div className="border-l-4"
+                style={{ borderLeftColor: activeFinding.severity === 'critical' ? 'var(--color-severity-critical)' :
+                  activeFinding.severity === 'high' ? 'var(--color-severity-high)' :
+                  activeFinding.severity === 'medium' ? 'var(--color-severity-medium)' :
+                  activeFinding.severity === 'low' ? 'var(--color-severity-low)' :
+                  'var(--color-severity-info)'
+                }}
+              >
+                <FindingCard
+                  finding={activeFinding}
+                  scanId={scanId!}
+                />
+              </div>
             </>
           ) : (
             <FindingsPanel
-              findings={data.findings}
+              findings={data?.findings || []}
               activeFindingId={activeFinding?.id ?? null}
               onFindingSelect={(f) => {
                 setActiveFinding(f)
-                // Switch to the file this finding is in
                 const matchingFile = fileNames.find(name => f.file_path === name || f.file_path?.endsWith(name))
                 if (matchingFile && matchingFile !== currentFile) {
                   setActiveFile(matchingFile)

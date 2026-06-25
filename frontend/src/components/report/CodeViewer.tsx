@@ -1,7 +1,8 @@
-import { useRef, useEffect, useCallback, lazy, Suspense } from 'react'
+import { useRef, useEffect, useCallback, lazy, Suspense, Component, type ReactNode } from 'react'
 import type { OnMount } from '@monaco-editor/react'
 import type { editor as MonacoEditor } from 'monaco-editor'
 import type { Finding } from '../../types'
+import { SEVERITY_COLORS } from '../../utils/severity'
 
 const Editor = lazy(() => import('@monaco-editor/react'))
 
@@ -21,6 +22,92 @@ const SEVERITY_MARKER: Record<string, MonacoEditor.MarkerSeverity> = {
   low: 2,
   info: 2,
 }
+
+// ─── Error boundary that catches Monaco crashes and renders plain code ───
+
+interface ErrorBoundaryState {
+  hasError: boolean
+}
+
+class MonacoErrorBoundary extends Component<{ children: ReactNode; fallback: ReactNode }, ErrorBoundaryState> {
+  constructor(props: { children: ReactNode; fallback: ReactNode }) {
+    super(props)
+    this.state = { hasError: false }
+  }
+
+  static getDerivedStateFromError(): ErrorBoundaryState {
+    return { hasError: true }
+  }
+
+  componentDidCatch(error: Error) {
+    console.warn('Monaco editor crashed, rendering fallback:', error.message)
+  }
+
+  render() {
+    if (this.state.hasError) return this.props.fallback
+    return this.props.children
+  }
+}
+
+// ─── Simple fallback code viewer (no Monaco dependency) ───
+
+function SimpleCodeViewer({
+  code,
+  findings,
+  activeFindingId,
+  onFindingClick,
+}: {
+  code: string
+  findings: Finding[]
+  activeFindingId: string | null
+  onFindingClick?: (finding: Finding) => void
+}) {
+  const safeCode = typeof code === 'string' ? code : String(code ?? '')
+  const lines = safeCode.split('\n')
+
+  return (
+    <div className="h-full overflow-auto bg-[#1e1e1e] text-[#d4d4d4] text-[13px] leading-[1.5] font-mono p-4">
+      <table className="w-full border-collapse">
+        <tbody>
+          {lines.map((line, idx) => {
+            const lineNum = idx + 1
+            const lineFindings = findings.filter(
+              (f) => f.line_start === lineNum || (f.line_start && f.line_end && lineNum >= f.line_start && lineNum <= f.line_end)
+            )
+            const isActive = lineFindings.some((f) => f.id === activeFindingId)
+            const severity = lineFindings[0]?.severity || 'info'
+            const bgClass = isActive
+              ? 'bg-brand-500/15'
+              : lineFindings.length > 0
+                ? `${SEVERITY_COLORS[severity as keyof typeof SEVERITY_COLORS]}/10`
+                : ''
+
+            return (
+              <tr key={idx} className={bgClass}>
+                <td className="select-none text-right pr-4 text-[#858585] w-12 align-top">
+                  {lineNum}
+                </td>
+                <td className="align-top whitespace-pre">
+                  {line || ' '}
+                  {lineFindings.length > 0 && (
+                    <span className="ml-2 inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded bg-severity-critical/20 text-severity-critical cursor-pointer"
+                      onClick={() => onFindingClick?.(lineFindings[0])}
+                      title={`${lineFindings[0].vulnerability_type} (${lineFindings[0].severity})`}
+                    >
+                      {lineFindings[0].vulnerability_type}
+                    </span>
+                  )}
+                </td>
+              </tr>
+            )
+          })}
+        </tbody>
+      </table>
+    </div>
+  )
+}
+
+// ─── Main CodeViewer ───
 
 export function CodeViewer({ code, language, fileName, findings, activeFindingId, onFindingClick }: CodeViewerProps) {
   const editorRef = useRef<MonacoEditor.IStandaloneCodeEditor | null>(null)
@@ -75,30 +162,41 @@ export function CodeViewer({ code, language, fileName, findings, activeFindingId
     ])
   }, [activeFindingId, findings])
 
+  const fallback = (
+    <SimpleCodeViewer
+      code={code}
+      findings={findings}
+      activeFindingId={activeFindingId}
+      onFindingClick={onFindingClick}
+    />
+  )
+
   return (
     <div className="h-full rounded-xl overflow-hidden border border-border-default">
-      <Suspense fallback={<div className="h-64 flex items-center justify-center text-text-muted">Loading editor...</div>}>
-        <Editor
-          height="100%"
-          language={language}
-          theme="vs-dark"
-          value={code}
-          path={fileName}
-          onMount={handleEditorMount}
-          options={{
-            readOnly: true,
-            minimap: { enabled: false },
-            scrollBeyondLastLine: false,
-            fontSize: 13,
-            lineNumbers: 'on',
-            padding: { top: 12 },
-            wordWrap: 'on',
-            renderLineHighlight: 'all',
-            domReadOnly: true,
-            contextmenu: false,
-          }}
-        />
-      </Suspense>
+      <MonacoErrorBoundary fallback={fallback}>
+        <Suspense fallback={<div className="h-64 flex items-center justify-center text-text-muted">Loading editor...</div>}>
+          <Editor
+            height="100%"
+            language={language}
+            theme="vs-dark"
+            value={code}
+            path={fileName}
+            onMount={handleEditorMount}
+            options={{
+              readOnly: true,
+              minimap: { enabled: false },
+              scrollBeyondLastLine: false,
+              fontSize: 13,
+              lineNumbers: 'on',
+              padding: { top: 12 },
+              wordWrap: 'on',
+              renderLineHighlight: 'all',
+              domReadOnly: true,
+              contextmenu: false,
+            }}
+          />
+        </Suspense>
+      </MonacoErrorBoundary>
     </div>
   )
 }

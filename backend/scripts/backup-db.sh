@@ -18,9 +18,10 @@ KEEP_DAYS="${KEEP_DAYS:-7}"
 KEEP_COUNT="${KEEP_COUNT:-7}"
 
 # ── Configuration ──────────────────────────────────────────
-POSTGRES_CONTAINER="${POSTGRES_CONTAINER:-codeguard_postgres}"
 POSTGRES_DB="${POSTGRES_DB:-codeguard}"
 POSTGRES_USER="${POSTGRES_USER:-codeguard_user}"
+POSTGRES_HOST="${POSTGRES_HOST:-localhost}"
+POSTGRES_PORT="${POSTGRES_PORT:-5432}"
 
 # ── Parse arguments ────────────────────────────────────────
 while [[ $# -gt 0 ]]; do
@@ -29,13 +30,9 @@ while [[ $# -gt 0 ]]; do
             KEEP_COUNT="$2"
             shift 2
             ;;
-        --container)
-            POSTGRES_CONTAINER="$2"
-            shift 2
-            ;;
         *)
             echo "Unknown option: $1"
-            echo "Usage: $0 [--keep N] [--container NAME]"
+            echo "Usage: $0 [--keep N]"
             exit 1
             ;;
     esac
@@ -51,23 +48,19 @@ BACKUP_FILE="${BACKUP_DIR}/codeguard_${POSTGRES_DB}_${TIMESTAMP}.sql.gz"
 echo "=========================================="
 echo " CodeGuard AI — Database Backup"
 echo " Database: ${POSTGRES_DB}"
-echo " Container: ${POSTGRES_CONTAINER}"
+echo " Host: ${POSTGRES_HOST}:${POSTGRES_PORT}"
 echo " Output: ${BACKUP_FILE}"
 echo "=========================================="
 echo ""
 
-# ── Check container is running ────────────────────────────
-if ! docker ps --format '{{.Names}}' | grep -q "^${POSTGRES_CONTAINER}$"; then
-    echo "ERROR: PostgreSQL container '${POSTGRES_CONTAINER}' is not running."
-    echo "Available containers:"
-    docker ps --format '{{.Names}}' | grep -i postgres || echo "  (none)"
-    exit 1
-fi
-
 # ── Create backup ──────────────────────────────────────────
 echo "[1/3] Creating backup..."
-docker exec "${POSTGRES_CONTAINER}" \
-    pg_dump -U "${POSTGRES_USER}" -d "${POSTGRES_DB}" --clean --if-exists \
+PGPASSWORD="${PGPASSWORD:-}" pg_dump \
+    -h "${POSTGRES_HOST}" \
+    -p "${POSTGRES_PORT}" \
+    -U "${POSTGRES_USER}" \
+    -d "${POSTGRES_DB}" \
+    --clean --if-exists \
     | gzip > "${BACKUP_FILE}"
 
 if [ ! -f "${BACKUP_FILE}" ]; then

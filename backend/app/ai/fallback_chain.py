@@ -163,7 +163,11 @@ class AIFallbackChain:
         self._init_providers()
 
     def _init_providers(self):
-        """Initialize providers based on available configuration."""
+        """Initialize providers based on available configuration.
+
+        Priority order (when configured):
+        1. OpenAI  2. Anthropic  3. Groq  4. OpenRouter  5. Ollama  6. Rule-based
+        """
         if settings.OPENAI_API_KEY:
             try:
                 from app.ai.providers.openai_provider import OpenAIProvider
@@ -172,6 +176,14 @@ class AIFallbackChain:
             except Exception as e:
                 logger.warning(f"Failed to initialize OpenAI provider: {e}")
 
+        if settings.ANTHROPIC_API_KEY:
+            try:
+                from app.ai.providers.anthropic_provider import AnthropicProvider
+                self.providers.append(AnthropicProvider())
+                logger.info("Anthropic provider registered")
+            except Exception as e:
+                logger.warning(f"Failed to initialize Anthropic provider: {e}")
+
         if settings.GROQ_API_KEY:
             try:
                 from app.ai.providers.groq_provider import GroqProvider
@@ -179,6 +191,14 @@ class AIFallbackChain:
                 logger.info("Groq provider registered")
             except Exception as e:
                 logger.warning(f"Failed to initialize Groq provider: {e}")
+
+        if settings.OPENROUTER_API_KEY:
+            try:
+                from app.ai.providers.openrouter_provider import OpenRouterProvider
+                self.providers.append(OpenRouterProvider())
+                logger.info("OpenRouter provider registered")
+            except Exception as e:
+                logger.warning(f"Failed to initialize OpenRouter provider: {e}")
 
         self.providers.append(OllamaProvider())
         self.providers.append(RuleBasedProvider())

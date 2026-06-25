@@ -88,10 +88,10 @@ async def register(
             errors=[{"field": "email", "message": "Email already in use"}]
         )
 
-    # Prevent self-assignment of admin/instructor roles during registration
+    # Prevent self-assignment of admin role during registration
     # Only admins can promote users via the admin endpoints
     role = user_data.role
-    if role in ("admin", "instructor"):
+    if role == "admin":
         role = "developer"
 
     hashed_password = get_password_hash(user_data.password)

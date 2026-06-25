@@ -1,7 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useAuthStore } from '../store/authStore'
 import { apiFetch } from '../lib/api'
-import type { ScanResult, ScanHistoryItem, AiExplanationRequest, AiExplanationResult, FixSuggestion } from '../types'
+import type { ScanResult, ScanHistoryItem, AiExplanationRequest, AiExplanationResult, FixSuggestion, Finding } from '../types'
 
 export function useScanResults(scanId: string | undefined) {
   const { isAuthenticated } = useAuthStore()
@@ -19,7 +19,20 @@ export function useScanHistory(skip = 0, limit = 20) {
 
   return useQuery<{ items: ScanHistoryItem[]; total: number }>({
     queryKey: ['scan-history', skip, limit],
-    queryFn: () => apiFetch(`/api/v1/analysis?skip=${skip}&limit=${limit}`),
+    queryFn: async () => {
+      const response = await apiFetch<any>(`/api/v1/analysis?skip=${skip}&limit=${limit}`)
+      // Backend returns paginated envelope: { data: Analysis[], pagination: {...} }
+      // Normalize to { items, total } expected by the UI
+      if (Array.isArray(response)) {
+        return { items: response as ScanHistoryItem[], total: response.length }
+      }
+      if (response && typeof response === 'object') {
+        const items = response.data || response.items || []
+        const total = response.pagination?.total ?? response.total ?? items.length
+        return { items: items as ScanHistoryItem[], total }
+      }
+      return { items: [], total: 0 }
+    },
     enabled: isAuthenticated,
     staleTime: 2 * 60 * 1000,
   })
@@ -52,6 +65,21 @@ export function useApplyFix(scanId: string, findingId: string) {
     mutationFn: () =>
       apiFetch<{ finding_id: string; new_status: string }>(
         `/api/v1/scanner/${scanId}/findings/${findingId}/apply-fix`,
+        { method: 'POST' }
+      ),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['scan-results', scanId] })
+    },
+  })
+}
+
+export function useEnrichFinding(scanId: string, findingId: string) {
+  const queryClient = useQueryClient()
+
+  return useMutation<Finding, Error, void>({
+    mutationFn: () =>
+      apiFetch<Finding>(
+        `/api/v1/scanner/${scanId}/findings/${findingId}/enrich`,
         { method: 'POST' }
       ),
     onSuccess: () => {

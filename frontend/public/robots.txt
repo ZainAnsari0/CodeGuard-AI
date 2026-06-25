@@ -1,0 +1,17 @@
+# https://www.robotstxt.org/robotstxt.html
+User-agent: *
+
+# Disallow searching/crawling authenticated routes and APIs
+Disallow: /api/
+Disallow: /dashboard/
+Disallow: /scan/
+Disallow: /admin/
+Disallow: /settings/
+Disallow: /history/
+Disallow: /classes/
+
+# Allow access to landing and public pages
+Allow: /$
+Allow: /landing
+Allow: /login
+Allow: /register

@@ -21,7 +21,7 @@
 
 ## 1. Executive Summary
 
-CodeGuard AI is a full-stack security analysis platform (FastAPI + React/TypeScript) with AI-powered vulnerability scanning, containerized code execution, Celery task queues, and an instructor/class management subsystem. The codebase is functional but exhibits architectural debt that will impede scaling.
+CodeGuard AI is a full-stack security analysis platform (FastAPI + React/TypeScript) with AI-powered vulnerability scanning, ephemeral temporary workspaces for static analysis, Celery task queues, and an instructor/class management subsystem. The codebase is functional but exhibits architectural debt that will impede scaling.
 
 ### Key Findings
 
@@ -64,7 +64,7 @@ app/
 ├── services/
 │   ├── auth.py                 # 350+ lines: tokens, hashing, revocation, Redis
 │   ├── cache.py                # Sync Redis + LRU fallback (should be fully async)
-│   ├── container.py            # Docker orchestration
+│   ├── temp_workspace.py           # Ephemeral scan workspace management
 │   ├── scan_orchestrator.py    # Good separation but imports ai_chain singleton
 │   └── file_validator.py       # File validation
 ├── ai/                         # AI provider chain (good structure)
@@ -85,7 +85,7 @@ app/
 
 **B. No Repository Layer** — Every endpoint directly writes `select(User).where(...)` queries. Changes to the data model require touching every endpoint.
 
-**C. Singleton Globals** — `ollama_client`, `prompt_cache`, `ai_chain`, `email_service`, `container_service`, `ast_validator` are module-level singletons. This prevents DI-based testing and causes import-time side effects.
+**C. Singleton Globals** — `ollama_client`, `prompt_cache`, `ai_chain`, `email_service`, `workspace_service`, `ast_validator` are module-level singletons. This prevents DI-based testing and causes import-time side effects.
 
 **D. Schema Duplication** — `ProjectCreate`, `ProjectUpdate`, `ProjectResponse` appear in both `models/project.py` and `schemas/project.py`. Same for `CodeFile*` schemas.
 
@@ -787,7 +787,7 @@ class UserResponse(BaseModel):
 - [ ] Add request/response validation middleware
 - [ ] Create `Makefile` with common commands (test, lint, migrate, etc.)
 - [ ] Add pre-commit hooks (ruff, mypy, bandit)
-- [ ] Create Docker health checks for all services
+- [ ] Create health check endpoints for all services
 - [ ] Add structured error responses to all endpoints
 - [ ] Performance test and add database indexes from Sprint 5-6 migrations
 

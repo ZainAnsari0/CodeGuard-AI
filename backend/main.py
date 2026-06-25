@@ -51,6 +51,10 @@ async def lifespan(app: FastAPI):
     from app.core.startup_checks import run_startup_checks
     await run_startup_checks()
 
+    # Initialize Redis prompt cache asynchronously
+    from app.services.cache import prompt_cache
+    await prompt_cache.initialize()
+
     # Validate JWT keys for RS256 mode
     from app.services.auth import validate_jwt_keys_on_startup
     if not validate_jwt_keys_on_startup():
@@ -61,6 +65,47 @@ async def lifespan(app: FastAPI):
     from app.infrastructure.database import engine
     from app.db.migrations import ensure_schema
     await ensure_schema(engine)
+
+    # Auto-seed initial admin account from environment variables
+    if settings.ADMIN_EMAIL and settings.ADMIN_PASSWORD:
+        from app.infrastructure.database import get_session as _get_session
+        from sqlalchemy import select
+        from app.services.auth import get_password_hash
+
+        async for db in _get_session():
+            try:
+                result = await db.execute(
+                    select(User).where(User.email == settings.ADMIN_EMAIL)
+                )
+                existing = result.scalar_one_or_none()
+                if not existing:
+                    admin = User(
+                        email=settings.ADMIN_EMAIL,
+                        hashed_password=get_password_hash(settings.ADMIN_PASSWORD),
+                        full_name="Admin",
+                        role="admin",
+                        is_active=True,
+                        is_superuser=True,
+                    )
+                    db.add(admin)
+                    await db.commit()
+                    logger.info(f"Initial admin account created: {settings.ADMIN_EMAIL}")
+                else:
+                    logger.info(f"Admin account already exists: {settings.ADMIN_EMAIL}")
+            except Exception as e:
+                logger.error(f"Failed to seed admin account: {e}")
+            break
+
+    # Ensure upload directory exists with proper permissions
+    import os
+    from app.core.config import settings
+    upload_dir = getattr(settings, "UPLOAD_DIR", "/tmp/codeguard_uploads")
+    try:
+        os.makedirs(upload_dir, exist_ok=True)
+        os.chmod(upload_dir, 0o755)
+        logger.info(f"Upload directory ready: {upload_dir}")
+    except Exception as e:
+        logger.warning(f"Could not set up upload directory: {e}")
 
     logger.info("Application startup complete")
     yield
@@ -84,6 +129,15 @@ async def lifespan(app: FastAPI):
         await close_revocation_store()
     except Exception as e:
         logger.warning(f"Error closing revocation store: {e}")
+
+    # Clean up stale temporary scan workspaces
+    try:
+        from app.services.temp_workspace import workspace_service
+        cleaned = workspace_service.cleanup_stale_workspaces()
+        if cleaned > 0:
+            logger.info(f"Cleaned up {cleaned} stale workspace(s) on shutdown")
+    except Exception as e:
+        logger.warning(f"Error cleaning up workspaces: {e}")
 
     logger.info("Shutdown complete")
 
@@ -135,10 +189,38 @@ app.add_middleware(
 
 # Rate limiting middleware
 from app.core.rate_limit import limiter
-from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 app.state.limiter = limiter
-app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
+@app.exception_handler(RateLimitExceeded)
+async def custom_rate_limit_exceeded_handler(request: Request, exc: RateLimitExceeded):
+    """Custom exception handler for SlowAPI RateLimitExceeded."""
+    retry_after = 60
+    view_limit = getattr(request.state, "view_rate_limit", None)
+    if view_limit:
+        try:
+            window_stats = request.app.state.limiter.limiter.get_window_stats(
+                view_limit[0], *view_limit[1]
+            )
+            reset_in = 1 + window_stats[0]
+            retry_after = max(1, int(reset_in - time.time()))
+        except Exception:
+            pass
+
+    response = JSONResponse(
+        status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+        headers={"Retry-After": str(retry_after)},
+        content={
+            "error": {
+                "code": "RATE_LIMIT_EXCEEDED",
+                "message": f"Rate limit exceeded: {exc.detail}",
+                "details": {"retry_after": retry_after},
+            }
+        },
+    )
+    if hasattr(request.app.state, "limiter") and view_limit:
+        response = request.app.state.limiter._inject_headers(response, view_limit)
+    return response
 
 # Prometheus metrics — restrict to internal networks in production
 from prometheus_fastapi_instrumentator import Instrumentator
@@ -186,7 +268,7 @@ async def app_exception_handler(request: Request, exc: AppException):
         status_code=exc.status_code,
         content={
             "error": {
-                "code": exc.error_code,
+                "code": exc.code,
                 "message": exc.message,
                 "details": exc.details,
             }
@@ -201,7 +283,7 @@ async def not_found_exception_handler(request: Request, exc: NotFoundException):
         status_code=status.HTTP_404_NOT_FOUND,
         content={
             "error": {
-                "code": exc.error_code,
+                "code": exc.code,
                 "message": exc.message,
                 "details": {"path": request.url.path},
             }
@@ -216,7 +298,7 @@ async def validation_exception_handler(request: Request, exc: ValidationError):
         status_code=status.HTTP_400_BAD_REQUEST,
         content={
             "error": {
-                "code": exc.error_code,
+                "code": exc.code,
                 "message": exc.message,
                 "details": {"errors": exc.errors},
             }
@@ -231,7 +313,7 @@ async def unauthorized_exception_handler(request: Request, exc: UnauthorizedExce
         status_code=status.HTTP_401_UNAUTHORIZED,
         content={
             "error": {
-                "code": exc.error_code,
+                "code": exc.code,
                 "message": exc.message,
                 "details": {},
             }
@@ -246,7 +328,7 @@ async def forbidden_exception_handler(request: Request, exc: ForbiddenException)
         status_code=status.HTTP_403_FORBIDDEN,
         content={
             "error": {
-                "code": exc.error_code,
+                "code": exc.code,
                 "message": exc.message,
                 "details": {},
             }
@@ -259,9 +341,10 @@ async def rate_limit_exception_handler(request: Request, exc: RateLimitException
     """Handle rate limit exceptions."""
     return JSONResponse(
         status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+        headers={"Retry-After": str(exc.retry_after)},
         content={
             "error": {
-                "code": exc.error_code,
+                "code": exc.code,
                 "message": exc.message,
                 "details": {"retry_after": exc.retry_after},
             }
@@ -294,6 +377,16 @@ async def health_check():
     """Health check endpoint for load balancers."""
     return {
         "status": "healthy",
+        "service": settings.PROJECT_NAME,
+        "version": settings.PROJECT_VERSION
+    }
+
+
+@app.get("/ready", include_in_schema=False)
+async def readiness_check():
+    """Readiness probe for Kubernetes/load balancers."""
+    return {
+        "status": "ready",
         "service": settings.PROJECT_NAME,
         "version": settings.PROJECT_VERSION
     }

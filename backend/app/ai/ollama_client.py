@@ -17,7 +17,7 @@ from app.core.config import settings
 logger = logging.getLogger(__name__)
 
 # Allowed Ollama hosts (local inference only)
-_ALLOWED_OLLAMA_HOSTS = {"localhost", "127.0.0.1", "::1", "host.docker.internal"}
+_ALLOWED_OLLAMA_HOSTS = {"localhost", "127.0.0.1", "::1"}
 
 
 def _validate_ollama_url(url: str) -> str:
@@ -62,7 +62,7 @@ def _validate_ollama_url(url: str) -> str:
 
 
 class OllamaClient:
-    """Client for interacting with local Ollama LLM inference server."""
+    """Client for interacting with Ollama LLM inference server."""
 
     def __init__(self, base_url: Optional[str] = None, model: Optional[str] = None):
         raw_url = (base_url or settings.OLLAMA_URL).rstrip("/")
@@ -70,6 +70,7 @@ class OllamaClient:
         self.model = model or settings.DEFAULT_MODEL
         self.timeout = 120.0
         self._client: Optional[httpx.AsyncClient] = None
+        self.api_key = settings.OLLAMA_API_KEY
 
     async def _get_client(self) -> httpx.AsyncClient:
         """Get or create the shared httpx client for connection reuse.
@@ -81,7 +82,13 @@ class OllamaClient:
                 return self._client
             # Close the stale client before creating a new one
             await self._client.aclose()
-        self._client = httpx.AsyncClient(timeout=self.timeout)
+
+        # Prepare headers including Authorization if API key is configured
+        headers = {}
+        if self.api_key:
+            headers["Authorization"] = f"Bearer {self.api_key}"
+
+        self._client = httpx.AsyncClient(timeout=self.timeout, headers=headers)
         return self._client
 
     async def generate(

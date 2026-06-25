@@ -3,8 +3,8 @@
 # CodeGuard AI — TLS Certificate Management
 # ═══════════════════════════════════════════════════════════════════
 # Usage:
-#   ./deploy/cert-manager.sh setup          # Initial certbot setup
-#   ./deploy/cert-manager.sh renew          # Renew certificates
+#   ./deploy/cert-manager.sh setup          # Initial Let's Encrypt certbot setup
+#   ./deploy/cert-manager.sh renew          # Renew Let's Encrypt certificates
 #   ./deploy/cert-manager.sh self-signed    # Generate self-signed certs (dev/staging)
 #   ./deploy/cert-manager.sh check          # Check certificate expiry
 #
@@ -15,7 +15,6 @@
 # ═══════════════════════════════════════════════════════════════════
 set -euo pipefail
 
-COMPOSE_CMD="${COMPOSE_CMD:-docker compose -f docker-compose.yml -f docker-compose.prod.yml}"
 DOMAIN="${DOMAIN:-codeguard.example.com}"
 EMAIL="${EMAIL:-admin@codeguard.example.com}"
 CERT_DIR="${CERT_DIR:-./certs}"
@@ -28,15 +27,19 @@ case $command in
         echo "🔐 Setting up Let's Encrypt for $DOMAIN..."
         mkdir -p "$CERT_DIR" "$CERTBOT_WEBROOT"
 
-        # Initial certificate request (standalone mode to avoid chicken-and-egg)
+        # Check certbot is installed
+        if ! command -v certbot &>/dev/null; then
+            echo "❌ certbot is not installed. Install it first:"
+            echo "   sudo apt install certbot   (Debian/Ubuntu)"
+            echo "   sudo dnf install certbot    (Fedora)"
+            exit 1
+        fi
+
+        # Initial certificate request
         echo "   Requesting initial certificate..."
-        docker run --rm \
-            -v "$CERT_DIR:/etc/letsencrypt" \
-            -v "$CERTBOT_WEBROOT:/var/www/certbot" \
-            certbot/certbot:v2.11.0 \
-            certonly \
+        sudo certbot certonly \
             --webroot \
-            --webroot-path=/var/www/certbot \
+            --webroot-path="$CERTBOT_WEBROOT" \
             --email "$EMAIL" \
             --agree-tos \
             --no-eff-email \
@@ -46,8 +49,8 @@ case $command in
 
         # Copy certs to expected location
         echo "   Installing certificates..."
-        cp "$CERT_DIR/live/$DOMAIN/fullchain.pem" "$CERT_DIR/fullchain.pem" 2>/dev/null || true
-        cp "$CERT_DIR/live/$DOMAIN/privkey.pem" "$CERT_DIR/tls_private.key" 2>/dev/null || true
+        cp "/etc/letsencrypt/live/$DOMAIN/fullchain.pem" "$CERT_DIR/fullchain.pem" 2>/dev/null || true
+        cp "/etc/letsencrypt/live/$DOMAIN/privkey.pem" "$CERT_DIR/tls_private.key" 2>/dev/null || true
         chmod 600 "$CERT_DIR/tls_private.key"
 
         echo "   Setting up auto-renewal cron job..."
@@ -57,24 +60,25 @@ case $command in
 
     renew)
         echo "🔄 Renewing TLS certificates for $DOMAIN..."
-        docker run --rm \
-            -v "$CERT_DIR:/etc/letsencrypt" \
-            -v "$CERTBOT_WEBROOT:/var/www/certbot" \
-            certbot/certbot:v2.11.0 \
-            renew \
-            --quiet
 
-        # Copy renewed certs
-        cp "$CERT_DIR/live/$DOMAIN/fullchain.pem" "$CERT_DIR/fullchain.pem" 2>/dev/null || true
-        cp "$CERT_DIR/live/$DOMAIN/privkey.pem" "$CERT_DIR/tls_private.key" 2>/dev/null || true
-        chmod 600 "$CERT_DIR/tls_private.key"
+        if command -v certbot &>/dev/null; then
+            sudo certbot renew --quiet
 
-        # Reload nginx to pick up new certs
-        echo "   Reloading nginx..."
-        $COMPOSE_CMD exec frontend nginx -s reload 2>/dev/null || \
-            docker exec codeguard_frontend nginx -s reload 2>/dev/null || \
-            echo "   ⚠️  Could not reload nginx — restart manually"
-        echo "✅ Certificates renewed and nginx reloaded"
+            # Copy renewed certs
+            cp "/etc/letsencrypt/live/$DOMAIN/fullchain.pem" "$CERT_DIR/fullchain.pem" 2>/dev/null || true
+            cp "/etc/letsencrypt/live/$DOMAIN/privkey.pem" "$CERT_DIR/tls_private.key" 2>/dev/null || true
+            chmod 600 "$CERT_DIR/tls_private.key"
+
+            # Reload nginx to pick up new certs
+            echo "   Reloading nginx..."
+            sudo systemctl reload nginx 2>/dev/null || \
+                sudo nginx -s reload 2>/dev/null || \
+                echo "   ⚠️  Could not reload nginx — reload manually"
+            echo "✅ Certificates renewed and nginx reloaded"
+        else
+            echo "❌ certbot is not installed. Cannot renew certificates."
+            exit 1
+        fi
         ;;
 
     self-signed)
@@ -116,7 +120,7 @@ case $command in
             JWT_EXPIRY=$(openssl rsa -pubin -in "$CERT_DIR/jwt_public.pem" -text -noout 2>/dev/null | head -2)
             echo "   ✅ JWT public key present"
         else
-            echo "   ⚠️  No JWT public key found — run: cd backend && bash generate_keys.sh"
+            echo "   ⚠️  No JWT public key found — run: bash backend/scripts/setup-tls.sh"
         fi
         ;;
 
@@ -126,8 +130,8 @@ case $command in
         echo "Usage: ./deploy/cert-manager.sh <command>"
         echo ""
         echo "Commands:"
-        echo "  setup          Request initial Let's Encrypt certificate"
-        echo "  renew          Renew existing certificates"
+        echo "  setup          Request initial Let's Encrypt certificate (requires certbot)"
+        echo "  renew          Renew existing Let's Encrypt certificates"
         echo "  self-signed    Generate self-signed certificate (dev/staging)"
         echo "  check          Check certificate expiry dates"
         echo ""

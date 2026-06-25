@@ -1,236 +1,312 @@
 # CodeGuard AI — Deployment Guide
 
+## Architecture Overview
+
+CodeGuard AI runs as a set of local processes — no Docker containers required.
+
+```
+┌──────────────────────────────────────────────────┐
+│                 Nginx (Reverse Proxy)              │
+│              TLS termination + static files         │
+└──────────────────────┬────────────────────────────┘
+                       │
+          ┌────────────┴────────────┐
+          │                          │
+┌─────────┴─────────┐  ┌────────────┴─────────────┐
+│  FastAPI Backend   │  │   Celery Workers          │
+│  (uvicorn)        │  │   (scan processing)        │
+│  Port 8000        │  │                            │
+└─────────┬─────────┘  └────────────┬──────────────┘
+          │                          │
+    ┌─────┴──────┐          ┌──────┴──────┐
+    │ PostgreSQL │          │   Redis      │
+    │  (Primary  │          │  (Broker +   │
+    │   DB)      │          │   Cache)     │
+    └────────────┘          └──────────────┘
+```
+
+**Key architectural principle:** Scans run via in-process AST analysis — uploaded code is **parsed, never executed**. Temporary workspaces provide filesystem isolation between scans.
+
+---
+
 ## Prerequisites
 
-- Docker 24+ and Docker Compose v2+
-- Domain name (for production TLS)
-- 4GB+ RAM, 2+ CPU cores
-- Linux host (tested on Ubuntu 22.04)
+- Python 3.11+
+- Node.js 18+ (for JavaScript scanner)
+- PostgreSQL 16+
+- Redis 7+
+- Nginx (production TLS termination)
 
-## Quick Start
+---
 
-### Development
+## Local Development Setup
+
+### 1. Clone and Configure
 
 ```bash
-# Clone and configure
 git clone <repo-url> && cd FYP
 cp .env.example .env
-# Edit .env with your API keys
-
-# Generate JWT keys
-bash backend/scripts/setup-tls.sh self-signed
-
-# Start services
-docker compose up -d
-
-# Run database migrations
-docker exec codeguard_api alembic upgrade head
-
-# Verify
-curl http://localhost:8000/health
-curl http://localhost:3000/
+# Edit .env with your API keys (OPENAI_API_KEY, GROQ_API_KEY, etc.)
 ```
 
-### Production
+### 2. Backend Setup
 
 ```bash
-# 1. Configure environment
+cd backend
+python -m venv venv
+source venv/bin/activate
+pip install -r requirements.txt
+
+# Generate JWT keys for RS256
+bash scripts/setup-tls.sh self-signed
+
+# Run database migrations
+alembic upgrade head
+
+# Start the API server
+uvicorn main:app --host 0.0.0.0 --port 8000 --reload
+```
+
+### 3. Celery Worker (separate terminal)
+
+```bash
+cd backend
+source venv/bin/activate
+celery -A app.tasks.celery_app worker --loglevel=info
+```
+
+### 4. Celery Beat (optional, for scheduled tasks)
+
+```bash
+cd backend
+source venv/bin/activate
+celery -A app.tasks.celery_app beat --loglevel=info
+```
+
+### 5. Frontend Setup
+
+```bash
+cd frontend
+npm install
+npm run dev
+# Available at http://localhost:5173
+```
+
+### 6. Production Frontend Build
+
+```bash
+cd frontend
+npm run build
+# Static files in frontend/dist/
+```
+
+---
+
+## Production Deployment
+
+### Environment Variables
+
+Copy `.env.production` and fill in ALL secrets:
+
+```bash
 cp .env.production .env.production.local
-# Edit ALL CHANGE_ME placeholders with strong passwords
-
-# 2. Generate TLS certificates
-# For local/self-signed:
-bash backend/scripts/setup-tls.sh self-signed
-# For production with a domain:
-DOMAIN=codeguard.example.com bash backend/scripts/setup-tls.sh production
-
-# 3. Deploy
-bash backend/scripts/deploy.sh production
-
-# 4. Verify
-curl -f https://localhost/health
+# Edit ALL CHANGE_ME placeholders
 ```
 
-## Architecture
+**Required in production:**
+- `SECRET_KEY` — 32+ character random string
+- `JWT_SECRET_KEY` — 32+ character random string (or use RS256 key pair)
+- `DATABASE_URL` — PostgreSQL connection string
+- `REDIS_URL` — Redis connection string with password
+- `CORS_ORIGINS` — Your production domain(s)
 
+### systemd Service Files
+
+**API Server** (`/etc/systemd/system/codeguard-api.service`):
+
+```ini
+[Unit]
+Description=CodeGuard AI API Server
+After=network.target postgresql.service redis.service
+
+[Service]
+Type=simple
+User=codeguard
+WorkingDirectory=/opt/codeguard/backend
+Environment=PATH=/opt/codeguard/backend/venv/bin
+ExecStart=/opt/codeguard/backend/venv/bin/uvicorn main:app --host 127.0.0.1 --port 8000 --workers 4
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
 ```
-                    ┌─────────────┐
-                    │   Internet   │
-                    └──────┬───────┘
-                           │
-                    ┌──────▼───────┐
-                    │   Nginx (FE)  │  :80/:443
-                    │  TLS + Static │
-                    └──────┬───────┘
-                           │ /api/
-                    ┌──────▼───────┐
-                    │  FastAPI API  │  :8000
-                    │  + /metrics   │
-                    └──────┬───────┘
-                     ┌─────┼──────┐
-                ┌────▼─┐ ┌─▼────┐ │
-                │Redis │ │PG DB │ │
-                └──────┘ └──────┘ │
-                    ┌──────▼──────┐
-                    │    Celery    │
-                    │  + Beat      │
-                    └─────────────┘
+
+**Celery Worker** (`/etc/systemd/system/codeguard-celery.service`):
+
+```ini
+[Unit]
+Description=CodeGuard AI Celery Worker
+After=network.target postgresql.service redis.service
+
+[Service]
+Type=simple
+User=codeguard
+WorkingDirectory=/opt/codeguard/backend
+Environment=PATH=/opt/codeguard/backend/venv/bin
+ExecStart=/opt/codeguard/backend/venv/bin/celery -A app.tasks.celery_app worker --loglevel=info --concurrency=4
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
 ```
 
-### Networks (Production)
+### Nginx Configuration
 
-| Network    | Services                              | Purpose          |
-|------------|---------------------------------------|------------------|
-| `public`   | frontend, grafana                    | Internet-facing  |
-| `backend`  | frontend, api, celery, celery-beat, prometheus, grafana | Service mesh |
-| `data`     | api, celery, celery-beat, postgres, redis  | Data layer  |
-| `monitoring` | prometheus, grafana                | Metrics          |
+```nginx
+server {
+    listen 443 ssl http2;
+    server_name codeguard.example.com;
 
-### Volumes
+    ssl_certificate /etc/letsencrypt/live/codeguard.example.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/codeguard.example.com/privkey.pem;
 
-| Volume             | Service    | Purpose              |
-|--------------------|-----------|----------------------|
-| `postgres_data`    | postgres  | Persistent DB data   |
-| `redis_data`      | redis     | Persistent cache      |
-| `prometheus_data` | prometheus| Metrics storage       |
-| `grafana_data`     | grafana   | Dashboard storage     |
+    # Security headers
+    add_header X-Content-Type-Options nosniff;
+    add_header X-Frame-Options DENY;
+    add_header X-XSS-Protection "1; mode=block";
+    add_header Referrer-Policy strict-origin-when-cross-origin;
 
-## Environment Variables
+    # Frontend (static files)
+    location / {
+        root /opt/codeguard/frontend/dist;
+        try_files $uri $uri/ /index.html;
+    }
 
-### Required (Production)
+    # API proxy
+    location /api/ {
+        proxy_pass http://127.0.0.1:8000;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_read_timeout 600s;
+    }
 
-| Variable              | Description                          | Default                     |
-|-----------------------|--------------------------------------|-----------------------------|
-| `POSTGRES_PASSWORD`   | Database password                    | **CHANGE_ME**               |
-| `JWT_ALGORITHM`       | JWT algorithm (HS256 or RS256)       | RS256                       |
-| `ALLOWED_HOSTS`       | Comma-separated allowed hosts        | localhost,127.0.0.1         |
-| `CORS_ORIGINS`        | Comma-separated CORS origins         | https://codeguard.example.com|
-| `OPENAI_API_KEY`      | OpenAI API key                       |                             |
-| `GRAFANA_ADMIN_PASSWORD` | Grafana admin password            | **CHANGE_ME**               |
+    # Health check
+    location /health {
+        proxy_pass http://127.0.0.1:8000;
+    }
 
-### Optional
+    # Metrics (internal network only)
+    location /metrics {
+        allow 10.0.0.0/8;
+        allow 172.16.0.0/12;
+        allow 192.168.0.0/16;
+        deny all;
+        proxy_pass http://127.0.0.1:8000;
+    }
+}
 
-| Variable                | Description                    | Default                      |
-|-------------------------|--------------------------------|------------------------------|
-| `DEBUG`                 | Enable debug mode              | false                        |
-| `RATE_LIMIT_REQUESTS`   | Max requests per window        | 60                           |
-| `RATE_LIMIT_WINDOW_SECONDS` | Rate limit window (s)       | 60                           |
-| `GROQ_API_KEY`          | Groq API key                   |                              |
-| `OLLAMA_URL`            | Ollama endpoint                | http://host.docker.internal:11434 |
+server {
+    listen 80;
+    server_name codeguard.example.com;
+    return 301 https://$host$request_uri;
+}
+```
+
+---
+
+## Security Model
+
+### Static Analysis Safety
+
+CodeGuard AI performs **static analysis only**. Uploaded code is:
+
+- **Parsed** via AST (Python) or Acorn (JavaScript)
+- **Analyzed** for vulnerability patterns
+- **Never executed, interpreted, or compiled**
+
+### Temporary Workspace Isolation
+
+Each scan gets an isolated temporary workspace:
+- Files stored in `/tmp/codeguard_uploads/{scan_id}/`
+- Workspaces deleted after scan completion
+- Stale workspaces cleaned up on startup and periodically
+- Only vulnerability metadata is persisted to the database
+
+### Production Checklist
+
+- [ ] PostgreSQL configured (not SQLite)
+- [ ] Redis password set
+- [ ] JWT RS256 key pair generated
+- [ ] SECRET_KEY and JWT_SECRET_KEY set (32+ chars)
+- [ ] CORS_ORIGINS set to production domains (no localhost)
+- [ ] EMAIL_BACKEND set to smtp (not console)
+- [ ] TLS certificates configured
+- [ ] Nginx security headers enabled
+- [ ] File upload limits configured (MAX_FILE_SIZE, ALLOWED_EXTENSIONS)
+- [ ] Rate limiting active
+- [ ] Prometheus + Grafana monitoring active
+
+---
 
 ## Monitoring
 
-### Accessing Dashboards
-
-- **Grafana**: http://localhost:3001 (admin / password from .env.production)
-- **Prometheus**: http://localhost:9090
-- **API Metrics**: http://localhost:8000/metrics
-
-### Key Metrics
-
-| Metric                     | Alert Threshold         |
-|----------------------------|-------------------------|
-| 5xx Error Rate             | > 5% for 5 minutes      |
-| p95 Latency                | > 2s for 5 minutes       |
-| Scan Queue Backlog         | > 50 pending for 10 min  |
-| Memory Usage               | > 85% for 10 minutes     |
-| Disk Space                 | < 10% remaining          |
-
-## Backup & Restore
-
-### Create Backup
+### Health Checks
 
 ```bash
-bash backend/scripts/backup-db.sh
+curl http://localhost:8000/health
+curl http://localhost:8000/ready
 ```
 
-Backups are stored in `backups/` directory. Default retention: 7 backups.
+### Metrics
 
-### Restore from Backup
+- **FastAPI metrics**: Available at `/metrics` (via prometheus-fastapi-instrumentator)
+- **PostgreSQL**: Via postgres_exporter
+- **Redis**: Via redis_exporter
+- **System**: Via node_exporter
+
+### Grafana Dashboard
+
+Import `monitoring/grafana/dashboards/codeguard-overview.json` for:
+- Request rate and latency
+- Scan queue depth
+- AI provider availability
+- Database and Redis health
+- Error rate by endpoint
+
+---
+
+## Database Management
 
 ```bash
-bash backend/scripts/restore-db.sh backups/codeguard_codeguard_20260528_020000.sql.gz
+# Create migration
+alembic revision --autogenerate -m "description"
+
+# Apply migrations
+alembic upgrade head
+
+# Rollback
+alembic downgrade -1
+
+# Backup
+bash scripts/backup-db.sh
+
+# Restore
+bash scripts/restore-db.sh
 ```
 
-### Automated Daily Backups (Crontab)
-
-```bash
-# Edit crontab
-crontab -e
-
-# Add daily backup at 2 AM
-0 2 * * * /path/to/FYP/backend/scripts/backup-db.sh >> /var/log/codeguard-backup.log 2>&1
-```
-
-## TLS Certificates
-
-### Generate Self-Signed (Development)
-
-```bash
-bash backend/scripts/setup-tls.sh self-signed
-```
-
-### Request Let's Encrypt (Production)
-
-```bash
-DOMAIN=codeguard.example.com bash backend/scripts/setup-tls.sh production
-```
-
-### Renew Let's Encrypt Certificates
-
-```bash
-bash backend/scripts/renew-tls.sh
-```
-
-### Auto-Renewal (Crontab)
-
-```bash
-# Renew at 3 AM on the 1st of each month
-0 3 1 * * /path/to/FYP/backend/scripts/renew-tls.sh >> /var/log/tls-renewal.log 2>&1
-```
+---
 
 ## Troubleshooting
 
-### Services won't start
-
-```bash
-# Check service status
-docker compose -f docker-compose.yml -f docker-compose.prod.yml ps
-
-# Check logs
-docker compose -f docker-compose.yml -f docker-compose.prod.yml logs api
-docker compose -f docker-compose.yml -f docker-compose.prod.yml logs celery
-
-# Restart specific service
-docker compose -f docker-compose.yml -f docker-compose.prod.yml restart api
-```
-
-### Database connection errors
-
-```bash
-# Check PostgreSQL is healthy
-docker exec codeguard_postgres pg_isready
-
-# Check connection from API
-docker exec codeguard_api python -c "from app.core.config import settings; print(settings.DATABASE_URL)"
-```
-
-### High memory usage
-
-```bash
-# Check container resource usage
-docker stats --no-stream
-
-# Increase memory limits in docker-compose.prod.yml
-# deploy.resources.limits.memory: 1G -> 2G
-```
-
-### Reset everything
-
-```bash
-# Stop all services
-docker compose -f docker-compose.yml -f docker-compose.prod.yml down
-
-# WARNING: This removes all data volumes
-docker compose -f docker-compose.yml -f docker-compose.prod.yml down -v
-```
+| Issue | Solution |
+|-------|----------|
+| API won't start | Check `.env` configuration, verify PostgreSQL and Redis are running |
+| Scans stuck in pending | Verify Celery worker is running and connected to Redis |
+| JWT errors | Ensure JWT keys are generated and paths configured |
+| Upload errors | Check `UPLOAD_DIR` is writable, verify `MAX_FILE_SIZE` |
+| AI providers failing | Check API keys in `.env`, verify Ollama is running if configured |
+| Node.js scanner | Ensure Node.js 18+ is installed for JavaScript scanning |

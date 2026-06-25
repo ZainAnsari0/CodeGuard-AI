@@ -25,14 +25,16 @@ describe('ScanPage (via ScanStore)', () => {
   })
 
   it('tracks upload state', async () => {
-    globalThis.fetch = vi.fn().mockResolvedValueOnce({
-      ok: true,
-      json: () => Promise.resolve({
-        scan_id: 'scan-test-1',
-        file_count: 2,
-        status: 'pending',
-      }),
-    })
+    globalThis.fetch = vi.fn().mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          scan_id: 'scan-test-1',
+          file_count: 2,
+          status: 'pending',
+        }),
+        { status: 200 }
+      )
+    )
 
     const file = new File(['content'], 'test.py', { type: 'text/x-python' })
     const result = await useScanStore.getState().uploadFiles([file], 'python')
@@ -45,10 +47,9 @@ describe('ScanPage (via ScanStore)', () => {
   })
 
   it('handles upload error gracefully', async () => {
-    globalThis.fetch = vi.fn().mockResolvedValueOnce({
-      ok: false,
-      json: () => Promise.resolve({ detail: 'Invalid file type' }),
-    })
+    globalThis.fetch = vi.fn().mockResolvedValueOnce(
+      new Response(JSON.stringify({ detail: 'Invalid file type' }), { status: 400 })
+    )
 
     const file = new File(['content'], 'test.exe', { type: 'application/octet-stream' })
     const result = await useScanStore.getState().uploadFiles([file], 'python')
@@ -70,15 +71,17 @@ describe('ScanPage (via ScanStore)', () => {
   it('fetches scan status', async () => {
     useScanStore.setState({ currentScanId: 'scan-1' })
 
-    globalThis.fetch = vi.fn().mockResolvedValueOnce({
-      ok: true,
-      json: () => Promise.resolve({
-        status: 'analyzing',
-        progress: 50,
-        stage: 'AI Analysis',
-        total_files: 5,
-      }),
-    })
+    globalThis.fetch = vi.fn().mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          status: 'analyzing',
+          progress: 50,
+          stage: 'AI Analysis',
+          total_files: 5,
+        }),
+        { status: 200 }
+      )
+    )
 
     await useScanStore.getState().fetchScanStatus('scan-1')
 
@@ -94,15 +97,17 @@ describe('ScanPage (via ScanStore)', () => {
       { id: '1', vulnerability_type: 'XSS', severity: 'high', title: 'XSS Vulnerability', description: 'Test', analyzer_type: 'ai', cwe_id: 'CWE-79', cvss_score: null, file_path: 'test.py', line_start: 10, line_end: 12, code_snippet: null, status: 'open', confidence: 0.9, fix_suggestions: [] },
     ]
 
-    globalThis.fetch = vi.fn().mockResolvedValueOnce({
-      ok: true,
-      json: () => Promise.resolve({
-        findings: mockFindings,
-        code_files: { 'test.py': 'print("hello")' },
-        status: 'completed',
-        total_files: 1,
-      }),
-    })
+    globalThis.fetch = vi.fn().mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          findings: mockFindings,
+          code_files: { 'test.py': 'print("hello")' },
+          status: 'completed',
+          total_files: 1,
+        }),
+        { status: 200 }
+      )
+    )
 
     await useScanStore.getState().fetchScanResults('scan-1')
 

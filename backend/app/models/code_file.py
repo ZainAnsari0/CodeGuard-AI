@@ -61,7 +61,7 @@ class CodeFileBase(SQLModel):
     )
     last_commit_date: Optional[datetime] = Field(
         default=None,
-        sa_column=Column(DateTime, nullable=True),
+        sa_column=Column(DateTime(timezone=True), nullable=True),
         description="Last commit date"
     )
     file_metadata: Optional[dict] = Field(
@@ -88,13 +88,13 @@ class CodeFile(CodeFileBase, table=True):
 
     created_at: Optional[datetime] = Field(
         default_factory=lambda: datetime.now(timezone.utc),
-        sa_column=Column(DateTime, server_default=func.now()),
+        sa_column=Column(DateTime(timezone=True), server_default=func.now()),
         description="Created timestamp"
     )
 
     updated_at: Optional[datetime] = Field(
         default_factory=lambda: datetime.now(timezone.utc),
-        sa_column=Column(DateTime, onupdate=func.now()),
+        sa_column=Column(DateTime(timezone=True), onupdate=func.now()),
         description="Updated timestamp"
     )
 

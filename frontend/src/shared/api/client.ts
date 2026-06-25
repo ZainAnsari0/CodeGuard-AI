@@ -7,7 +7,7 @@
  *   const user = await apiClient.get<User>('/api/v1/users/me')
  */
 
-const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000'
+const API_BASE_URL = import.meta.env.VITE_API_URL ?? ''
 
 export { API_BASE_URL }
 
@@ -26,6 +26,33 @@ export class ApiError extends Error {
   }
 }
 
+// ---------------------------------------------------------------------------
+// 401 auto-refresh: transparently refreshes expired access tokens.
+// ---------------------------------------------------------------------------
+
+let refreshPromise: Promise<boolean> | null = null
+
+async function tryRefreshToken(): Promise<boolean> {
+  // Deduplicate concurrent refresh attempts
+  if (refreshPromise) return refreshPromise
+
+  refreshPromise = (async () => {
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/v1/auth/refresh`, {
+        method: 'POST',
+        credentials: 'include',
+      })
+      return res.ok
+    } catch {
+      return false
+    } finally {
+      refreshPromise = null
+    }
+  })()
+
+  return refreshPromise
+}
+
 interface RequestOptions extends RequestInit {
   params?: Record<string, string | number | undefined>
 }
@@ -38,7 +65,8 @@ export class ApiClient {
   }
 
   private buildUrl(path: string, params?: Record<string, string | number | undefined>): string {
-    const url = new URL(path.startsWith('http') ? path : `${this.baseUrl}${path}`)
+    const base = this.baseUrl || (typeof window !== 'undefined' ? window.location.origin : 'http://localhost')
+    const url = new URL(path.startsWith('http') ? path : `${base}${path}`)
     if (params) {
       Object.entries(params).forEach(([key, value]) => {
         if (value !== undefined) url.searchParams.set(key, String(value))
@@ -68,6 +96,13 @@ export class ApiClient {
       } catch (e) {
         if (e instanceof ApiError) throw e
         // Response wasn't JSON
+      }
+
+      // If still 401 after refresh attempt, redirect to login
+      if (response.status === 401) {
+        try { sessionStorage.removeItem('auth-storage') } catch { /* ignore */ }
+        window.location.href = '/login'
+        throw new ApiError(401, 'AUTH_EXPIRED', 'Session expired. Please log in again.')
       }
 
       throw new ApiError(response.status, code, message)
@@ -101,7 +136,16 @@ export class ApiClient {
       headers['Content-Type'] = 'application/json'
     }
 
-    const response = await fetch(url, { ...fetchOptions, headers, credentials: 'include' })
+    let response = await fetch(url, { ...fetchOptions, headers, credentials: 'include' })
+
+    // On 401, attempt a token refresh and retry once
+    if (response.status === 401) {
+      const refreshed = await tryRefreshToken()
+      if (refreshed) {
+        response = await fetch(url, { ...fetchOptions, headers, credentials: 'include' })
+      }
+    }
+
     return this.handleResponse<T>(response)
   }
 

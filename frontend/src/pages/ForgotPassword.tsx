@@ -51,22 +51,22 @@ export function ForgotPassword() {
             <Shield className="w-10 h-10 text-white" />
           </div>
 
-          <h1 className="text-4xl font-bold text-text-primary mb-4">
+          <h1 className="text-4xl font-bold text-on-surface mb-4">
             Account <span className="gradient-text">Recovery</span>
           </h1>
-          <p className="text-text-secondary text-lg leading-relaxed">
+          <p className="text-on-surface-variant text-lg leading-relaxed">
             Security is our priority. We&apos;ll help you regain access to your account quickly and safely.
           </p>
 
           <div className="mt-8 glass-card p-5 rounded-lg text-left space-y-3">
-            <h3 className="text-sm font-semibold text-text-primary">Security Tips</h3>
+            <h3 className="text-sm font-semibold text-on-surface">Security Tips</h3>
             <ul className="space-y-2">
               {[
                 'Use a strong, unique password',
                 'Enable two-factor authentication',
                 'Never share your login credentials',
               ].map((tip, i) => (
-                <li key={i} className="flex items-start gap-2 text-sm text-text-secondary">
+                <li key={i} className="flex items-start gap-2 text-sm text-on-surface-variant">
                   <CheckCircle className="w-4 h-4 text-success mt-0.5 shrink-0" />
                   <span>{tip}</span>
                 </li>
@@ -84,12 +84,12 @@ export function ForgotPassword() {
             <div className="inline-flex items-center justify-center w-14 h-14 rounded-xl bg-gradient-to-br from-brand-400 to-accent-500 shadow-glow-cyan mb-4 shield-logo">
               <Shield className="w-7 h-7 text-white" />
             </div>
-            <h1 className="text-2xl font-bold text-text-primary">CodeGuard AI</h1>
+            <h1 className="text-2xl font-bold text-on-surface">CodeGuard AI</h1>
           </div>
 
           <div className="mb-8">
-            <h2 className="text-2xl font-bold text-text-primary">Forgot Password?</h2>
-            <p className="text-text-secondary mt-2">No worries, we&apos;ll send you a reset link</p>
+            <h2 className="text-2xl font-bold text-on-surface">Forgot Password?</h2>
+            <p className="text-on-surface-variant mt-2">No worries, we&apos;ll send you a reset link</p>
           </div>
 
           <div className="glass-card p-8">
@@ -105,24 +105,24 @@ export function ForgotPassword() {
                 <div className="inline-flex items-center justify-center w-16 h-16 rounded-full bg-success/10 border-2 border-success/30 mb-5">
                   <CheckCircle className="w-8 h-8 text-success" />
                 </div>
-                <h3 className="text-xl font-bold text-text-primary mb-2">Email Sent!</h3>
-                <p className="text-text-secondary text-sm">
+                <h3 className="text-xl font-bold text-on-surface mb-2">Email Sent!</h3>
+                <p className="text-on-surface-variant text-sm">
                   Check your inbox for instructions to reset your password.
                 </p>
-                <p className="text-xs text-text-muted mt-3">Redirecting to login...</p>
+                <p className="text-xs text-on-surface-variant/60 mt-3">Redirecting to login...</p>
               </div>
             ) : (
               <form onSubmit={handleSubmit(onSubmit)} className="space-y-5">
                 <div>
-                  <label className="block text-sm font-medium text-text-secondary mb-2">
+                  <label className="block text-sm font-medium text-on-surface-variant mb-2">
                     Email Address
                   </label>
                   <div className="relative">
-                    <Mail className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-text-muted" />
+                    <Mail className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-on-surface-variant/50" />
                     <input
                       type="email"
                       {...register('email')}
-                      className={`w-full pl-10 pr-4 py-3 rounded-lg input-glow text-sm text-text-primary placeholder-text-muted ${errors.email ? 'border-severity-critical' : ''}`}
+                      className={`w-full pl-10 pr-4 py-3 rounded-lg input-glow text-sm text-on-surface placeholder-on-surface-variant/40 ${errors.email ? 'border-severity-critical' : ''}`}
                       placeholder="Enter your email address"
                     />
                   </div>
@@ -158,7 +158,7 @@ export function ForgotPassword() {
             </div>
           </div>
 
-          <p className="mt-8 text-center text-xs text-text-muted">
+          <p className="mt-8 text-center text-xs text-on-surface-variant/40">
             &copy; 2026 CodeGuard AI. All rights reserved.
           </p>
         </div>

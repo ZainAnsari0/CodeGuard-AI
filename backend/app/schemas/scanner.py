@@ -37,6 +37,9 @@ class FixSuggestionResponse(BaseModel):
     code_before: Optional[str] = None
     code_after: Optional[str] = None
     language: str = ""
+    ast_validated: Optional[bool] = None
+    validation_warnings: Optional[List[str]] = None
+    confidence: Optional[float] = None
 
 
 class FindingResponse(BaseModel):
@@ -55,6 +58,9 @@ class FindingResponse(BaseModel):
     status: str = "new"
     confidence: Optional[float] = None
     fix_suggestions: List[FixSuggestionResponse] = []
+    finding_metadata: Optional[dict] = None
+    explanation: Optional[Dict[str, Any]] = None
+    explanation_provider: Optional[str] = None
 
 
 class ScanResultResponse(BaseModel):
@@ -62,5 +68,12 @@ class ScanResultResponse(BaseModel):
     status: str
     total_files: int = 0
     findings: List[FindingResponse] = []
-    code_files: Dict[str, Dict[str, Any]] = Field(default_factory=dict, description="file_name -> {id, language, lines}")
+    code_files: Dict[str, str] = Field(default_factory=dict, description="file_name -> file content")
     summary: Optional[dict] = None
+
+
+class EnrichFindingResponse(BaseModel):
+    """Response for on-demand enrichment of a finding."""
+    finding: FindingResponse
+    explanation_cached: bool = False
+    message: str = "Finding enriched successfully"

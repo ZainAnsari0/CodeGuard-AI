@@ -3,9 +3,9 @@
 # ═══════════════════════════════════════════════════════════════════
 # Pipeline stages:
 #   1. Lint & Test       — Code quality, unit tests, security scan
-#   2. Build             — Docker image build + push to registry
+#   2. Build             — Frontend production build
 #   3. Deploy Staging    — Auto-deploy to staging on main branch
-#   4. Deploy Production  — Manual approval + deploy to production
+#   4. Deploy Production — Manual approval + deploy to production
 # ═══════════════════════════════════════════════════════════════════
 
 name: CodeGuard AI CI/CD
@@ -17,8 +17,6 @@ on:
     branches: [main, staging]
 
 env:
-  DOCKER_REGISTRY: ghcr.io
-  IMAGE_PREFIX: ${{ github.repository }}
   PYTHON_VERSION: "3.11"
 
 jobs:
@@ -164,73 +162,41 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-  # ── Job 4: Build & Push Docker Images ─────────────────────────
-  build-images:
-    name: Build & Push Images
-    needs: [backend-test, frontend-test]
+  # ── Job 4: Build Frontend Artifact ─────────────────────────────
+  build-frontend:
+    name: Build Frontend
+    needs: [frontend-test]
     if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/staging')
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      packages: write
-
-    strategy:
-      matrix:
-        include:
-          - image: api
-            dockerfile: backend/Dockerfile
-            context: backend
-          - image: frontend
-            dockerfile: frontend/Dockerfile
-            context: frontend
-            build_args: NGINX_ENV=prod
-          - image: celery
-            dockerfile: backend/Dockerfile.celery
-            context: backend
-          - image: scanner
-            dockerfile: backend/Dockerfile.scanner
-            context: backend
-
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Log in to GitHub Container Registry
-        uses: docker/login-action@v3
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
         with:
-          registry: ${{ env.DOCKER_REGISTRY }}
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: frontend/package-lock.json
 
-      - name: Extract metadata
-        id: meta
-        uses: docker/metadata-action@v5
-        with:
-          images: ${{ env.DOCKER_REGISTRY }}/${{ env.IMAGE_PREFIX }}/${{ matrix.image }}
-          tags: |
-            type=sha,prefix=
-            type=ref,event=branch
-            type=raw,value=latest,enable={{is_default_branch}}
+      - name: Install and build
+        run: |
+          cd frontend
+          npm ci
+          npm run build
+        env:
+          VITE_API_URL: /api/v1
 
-      - name: Build and push
-        uses: docker/build-push-action@v5
+      - name: Upload production build
+        uses: actions/upload-artifact@v4
         with:
-          context: ./${{ matrix.context }}
-          file: ./${{ matrix.dockerfile }}
-          push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-          build-args: |
-            ${{ matrix.build_args }}
+          name: frontend-production
+          path: frontend/dist/
+          retention-days: 5
 
   # ── Job 5: Deploy to Staging ──────────────────────────────────
   deploy-staging:
     name: Deploy to Staging
-    needs: [build-images]
+    needs: [backend-test, build-frontend]
     if: github.ref == 'refs/heads/staging'
     runs-on: ubuntu-latest
     environment: staging
@@ -245,15 +211,17 @@ jobs:
           key: ${{ secrets.STAGING_SSH_KEY }}
           script: |
             cd /opt/codeguard
-            docker compose -f docker-compose.yml -f docker-compose.staging.yml pull
-            docker compose -f docker-compose.yml -f docker-compose.staging.yml up -d --remove-orphans
+            git pull origin staging
+            cd backend && source venv/bin/activate && pip install -r requirements.txt -q
+            cd .. && cd frontend && npm ci && npm run build
+            cd .. && bash deploy/deploy.sh --skip-backup
             sleep 15
             curl -sf http://localhost:8000/api/v1/health | python3 -m json.tool
 
   # ── Job 6: Deploy to Production ────────────────────────────────
   deploy-production:
     name: Deploy to Production
-    needs: [build-images, security-audit]
+    needs: [build-frontend, security-audit]
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     environment: production
@@ -275,26 +243,10 @@ jobs:
           script: |
             cd /opt/codeguard
             # Backup database before deployment
-            ./deploy/db-backup.sh
-            # Pull latest images
-            docker compose -f docker-compose.yml -f docker-compose.prod.yml pull
-            # Rolling deployment
-            docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --no-deps api
-            sleep 10
-            # Health check
-            for i in 1 2 3 4 5 6; do
-              if curl -sf http://localhost:8000/api/v1/health | grep -q "healthy"; then
-                echo "API is healthy, proceeding with remaining services"
-                break
-              fi
-              echo "Waiting for API health check... ($i/6)"
-              sleep 10
-            done
-            # Deploy remaining services
-            docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --remove-orphans
-            sleep 15
-            # Final health check
-            curl -sf http://localhost:8000/api/v1/health || exit 1
+            bash deploy/db-backup.sh
+            # Pull latest code and deploy
+            git pull origin main
+            bash deploy/deploy.sh
 
       - name: Verify deployment
         uses: appleboy/ssh-action@v1
@@ -303,13 +255,11 @@ jobs:
           username: ${{ secrets.PRODUCTION_USER }}
           key: ${{ secrets.PRODUCTION_SSH_KEY }}
           script: |
-            cd /opt/codeguard
             STATUS=$(curl -sf http://localhost:8000/api/v1/ready | python3 -c 'import json,sys; print(json.load(sys.stdin).get("status","unknown"))')
             if [ "$STATUS" != "healthy" ] && [ "$STATUS" != "degraded" ]; then
               echo "❌ Deployment verification failed: status=$STATUS"
               # Auto-rollback
-              docker compose -f docker-compose.yml -f docker-compose.prod.yml down api celery celery-beat frontend
-              docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+              bash deploy/deploy.sh --rollback
               exit 1
             fi
             echo "✅ Deployment verified: status=$STATUS"

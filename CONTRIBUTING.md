@@ -5,7 +5,8 @@
 ### Prerequisites
 - Python 3.11+
 - Node.js 18+
-- Docker & Docker Compose
+- PostgreSQL 16+ (or SQLite for development)
+- Redis 7+ (optional, for caching and task queue)
 - Git
 
 ### Backend Setup

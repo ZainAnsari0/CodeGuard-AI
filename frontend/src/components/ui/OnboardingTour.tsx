@@ -78,6 +78,8 @@ export function OnboardingTour({ steps = defaultSteps, onComplete }: OnboardingT
       continuous
       showProgress
       showSkipButton
+      clickToClose
+      disableOverlayClose
       styles={{
         options: {
           primaryColor: '#6366f1',

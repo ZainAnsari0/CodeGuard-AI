@@ -186,13 +186,21 @@ class BenchmarkRunner:
         for vuln_type, pattern_list in patterns.items():
             for pattern, cwe_id in pattern_list:
                 try:
-                    if re.search(pattern, code):
+                    for match in re.finditer(pattern, code):
+                        # Check if match is in a comment — skip it
+                        line_start = code.rfind('\n', 0, match.start()) + 1
+                        line = code[line_start:code.find('\n', match.start())]
+                        stripped_line = line.lstrip()
+                        if stripped_line.startswith('#') or stripped_line.startswith('//'):
+                            continue
                         findings.append({
                             "vulnerability_type": vuln_type,
                             "severity": "high",
                             "cwe_id": cwe_id,
                             "confidence": 0.85,
                         })
+                        # Only one finding per vuln type per file
+                        break
                 except re.error:
                     pass
 

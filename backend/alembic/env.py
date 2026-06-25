@@ -28,7 +28,7 @@ if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
 # Use async-compatible URL, convert for alembic sync usage
-sync_url = settings.DATABASE_URL.replace("+asyncpg", "")
+sync_url = settings.DATABASE_URL.replace("+asyncpg", "").replace("+aiosqlite", "")
 config.set_main_option("sqlalchemy.url", sync_url)
 
 target_metadata = SQLModel.metadata

@@ -6,31 +6,34 @@ CodeGuard AI is a privacy-first, AI-augmented static application security testin
 
 ## Features
 
-- **AST-based scanning** for Python and JavaScript code
-- **AI-powered explanations** with LLM fallback chain (Ollama → Groq → OpenAI)
+- **AST-based scanning** for Python and JavaScript code (in-process, no containers)
+- **AI-powered explanations** with LLM fallback chain (OpenAI → Anthropic → Groq → OpenRouter → Ollama → Rule-based)
 - **Validated remediation** — every AI-generated fix passes syntactic validation
-- **Ephemeral Docker containers** — zero code persistence after scan
-- **Role-based access** — Student, Instructor, Admin roles
+- **Ephemeral temporary workspaces** — zero source code persistence after scan
+- **Static Analysis Safety Model** — code is parsed, never executed
+- **Role-based access** — Developer, Instructor, Admin roles
 - **Shared reports** — generate shareable links for scan findings
 - **Knowledge base** — CWE-based educational content
 - **Dark/light theme** with responsive design
 
 ## Tech Stack
 
-| Layer      | Technology                                        |
-|------------|---------------------------------------------------|
+| Layer      | Technology                                           |
+|------------|------------------------------------------------------|
 | Frontend   | React 19, Vite 8, TanStack Query, Zustand, Tailwind |
-| Backend    | FastAPI, SQLModel, PostgreSQL, Redis, Celery       |
-| AI         | Ollama (local), Groq (fast), OpenAI (fallback)     |
-| Scanning   | Docker containers, Python AST, JS Acorn parser     |
-| Infra      | Docker Compose, Nginx, Prometheus, Grafana          |
+| Backend    | FastAPI, SQLModel, PostgreSQL, Redis, Celery         |
+| AI         | Multi-provider fallback chain with local LLM support |
+| Scanning   | Python AST, JS Acorn parser (in-process)            |
+| Infra      | Nginx, Prometheus, Grafana, systemd                   |
 
 ## Quick Start
 
 ### Prerequisites
 
-- Docker 24+ and Docker Compose v2+
-- 4GB+ RAM, 2+ CPU cores
+- Python 3.11+
+- Node.js 18+ (for JavaScript scanning)
+- PostgreSQL 16+ (or SQLite for development)
+- Redis 7+ (optional, for caching and task queue)
 
 ### Development Setup
 
@@ -38,21 +41,26 @@ CodeGuard AI is a privacy-first, AI-augmented static application security testin
 # Clone and configure
 git clone <repo-url> && cd FYP
 cp .env.example .env
-# Edit .env with your API keys (OPENAI_API_KEY, GROQ_API_KEY)
+# Edit .env with your API keys (OPENAI_API_KEY, GROQ_API_KEY, etc.)
 
 # Generate JWT keys
 bash backend/scripts/setup-tls.sh self-signed
 
-# Start services
-docker compose up -d
+# Backend setup
+cd backend
+python -m venv venv
+source venv/bin/activate
+pip install -r requirements.txt
+alembic upgrade head
+uvicorn main:app --host 0.0.0.0 --port 8000 --reload
 
-# Run database migrations
-docker exec codeguard_api alembic upgrade head
+# Celery worker (separate terminal)
+celery -A app.tasks.celery_app worker --loglevel=info
 
-# Access the application
-# Frontend: http://localhost:3000
-# API Docs:  http://localhost:8000/api/v1/docs
-# Health:    http://localhost:8000/health
+# Frontend setup (separate terminal)
+cd frontend
+npm install
+npm run dev    # http://localhost:5173
 ```
 
 ### Production Deployment
@@ -62,11 +70,15 @@ docker exec codeguard_api alembic upgrade head
 cp .env.production .env.production.local
 # Edit ALL CHANGE_ME placeholders
 
-# Generate TLS certificates
+# Generate JWT keys
 bash backend/scripts/setup-tls.sh production
 
-# Deploy
-bash backend/scripts/deploy.sh production
+# Build frontend
+cd frontend && npm run build
+
+# Start services via systemd
+sudo systemctl start codeguard-api
+sudo systemctl start codeguard-celery
 ```
 
 See [docs/deployment.md](docs/deployment.md) for full deployment documentation.
@@ -74,11 +86,11 @@ See [docs/deployment.md](docs/deployment.md) for full deployment documentation.
 ## Testing
 
 ```bash
-# Backend tests (112 tests)
+# Backend tests (112+ tests)
 cd backend
 pytest tests/ -v --cov=app --cov-report=term-missing
 
-# Frontend tests (41 tests)
+# Frontend tests (41+ tests)
 cd frontend
 npm test -- --coverage
 
@@ -97,18 +109,22 @@ cd frontend && bash scripts/security_audit.sh
 FYP/
 ├── backend/               # FastAPI backend
 │   ├── app/               # Application code
-│   │   ├── ai/            # AI pipeline (Ollama, Groq, OpenAI)
+│   │   ├── ai/            # AI pipeline (multi-provider fallback chain)
 │   │   ├── api/           # API endpoints
 │   │   ├── core/          # Config, JWT, rate limiting
 │   │   ├── db/            # Database session
 │   │   ├── models/        # SQLModel models
 │   │   ├── schemas/       # Pydantic schemas
 │   │   ├── services/      # Business logic
+│   │   │   ├── auth.py              # JWT, bcrypt, lockout
+│   │   │   ├── scan_orchestrator.py # Full scan pipeline
+│   │   │   ├── temp_workspace.py    # Ephemeral workspace management
+│   │   │   └── ...
 │   │   └── tasks/         # Celery tasks
 │   ├── alembic/           # Database migrations
+│   ├── scanner/           # AST scanners (in-process)
 │   ├── scripts/           # Utility scripts
-│   ├── tests/             # Test suite
-│   └── Dockerfile
+│   └── tests/             # Test suite
 ├── frontend/              # React frontend
 │   ├── src/
 │   │   ├── components/    # UI components
@@ -116,19 +132,23 @@ FYP/
 │   │   ├── store/         # Zustand stores
 │   │   ├── hooks/         # Custom hooks
 │   │   └── types/         # TypeScript types
-│   ├── e2e/               # Playwright E2E tests
-│   ├── nginx.conf         # Dev nginx config
-│   ├── nginx.prod.conf    # Production nginx config
-│   └── Dockerfile
+│   └── nginx configs
 ├── monitoring/            # Prometheus + Grafana
-│   ├── prometheus.yml
-│   ├── alerts.yml
-│   └── grafana/           # Dashboards & provisioning
-├── certs/                 # TLS & JWT keys (gitignored)
-├── docker-compose.yml     # Development compose
-├── docker-compose.prod.yml # Production overlay
-└── docs/                  # Documentation
+├── certs/                 # JWT keys (gitignored)
+├── deploy/                # Deployment scripts
+├── docs/                  # Documentation
+└── Makefile               # Common development commands
 ```
+
+## Security Model
+
+CodeGuard AI performs **static analysis only**. User code is:
+
+- **Parsed** — AST analysis reads the syntax tree
+- **Analyzed** — Pattern matching detects vulnerability patterns
+- **Tokenized** — AI models process code as text tokens
+
+User code is **never** executed, interpreted, or compiled. Temporary workspaces (`/tmp/codeguard_uploads/{scan_id}/`) are automatically deleted after scan completion. Only vulnerability metadata is persisted in the database.
 
 ## Team
 

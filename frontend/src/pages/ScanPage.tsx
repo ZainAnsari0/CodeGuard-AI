@@ -103,6 +103,9 @@ export function ScanPage() {
     const result = await uploadFiles(files, language)
     if (result.success && result.scanId) {
       navigate(`/scan/${result.scanId}/progress`)
+    } else {
+      // Show error from scanStore or fallback
+      setLocalError(result.error || 'Upload failed. Please try again.')
     }
   }
 
@@ -113,180 +116,225 @@ export function ScanPage() {
   }
 
   return (
-    <div className="space-y-6 animate-fade-in">
-      <div>
-        <h1 className="text-2xl font-bold text-text-primary">New Scan</h1>
-        <p className="text-text-secondary mt-1">Upload code files to analyze for security vulnerabilities</p>
-      </div>
+    <div className="relative min-h-screen flex items-center justify-center overflow-hidden bg-surface-dim py-12 px-4">
+      {/* Decorative ambient background */}
+      <div className="absolute inset-0 bg-grid-pattern pointer-events-none" />
+      <div className="orb-cyan w-[400px] h-[400px] -top-32 -right-32 opacity-60" />
+      <div className="orb-violet w-[500px] h-[500px] -bottom-48 -left-48 opacity-50" />
 
-      {displayError && (
-        <div className="flex items-start gap-3 p-4 rounded-lg bg-severity-critical-bg border border-severity-critical/20 animate-fade-in">
-          <AlertCircle className="w-5 h-5 text-severity-critical mt-0.5 shrink-0" />
-          <p className="text-sm text-severity-critical">{displayError}</p>
-        </div>
-      )}
-
-      <div className="glass-card p-6 space-y-6">
-        {/* Language selection */}
-        <div>
-          <label className="block text-sm font-medium text-text-secondary mb-2">
-            Primary Language
-          </label>
-          <select
-            value={language}
-            onChange={(e) => setLanguage(e.target.value)}
-            className="w-full px-4 py-3 rounded-lg bg-bg-primary border border-border-default text-sm text-text-primary
-              focus:border-brand-500 focus:shadow-glow-cyan-sm outline-none transition-all"
-          >
-            {SUPPORTED_LANGUAGES.map((lang) => (
-              <option key={lang.value} value={lang.value}>
-                {lang.label} ({lang.extensions})
-              </option>
-            ))}
-          </select>
+      {/* Main card */}
+      <div className="relative z-10 w-full max-w-3xl animate-slide-up">
+        {/* Header */}
+        <div className="text-center mb-8">
+          <h1 className="text-display-lg gradient-text">New Scan</h1>
+          <p className="text-body-md text-on-surface-variant mt-2">
+            Upload code files to analyze for security vulnerabilities
+          </p>
         </div>
 
-        {/* Tab toggle */}
-        <div className="flex gap-1 p-1 rounded-lg bg-bg-primary border border-border-default">
-          <button
-            onClick={() => setActiveTab('upload')}
-            className={`flex-1 flex items-center justify-center gap-2 px-4 py-2 rounded-md text-sm font-medium transition-all ${
-              activeTab === 'upload'
-                ? 'bg-bg-tertiary text-text-primary shadow-sm'
-                : 'text-text-muted hover:text-text-secondary'
-            }`}
-          >
-            <Upload className="w-4 h-4" />
-            Upload Files
-          </button>
-          <button
-            onClick={() => setActiveTab('paste')}
-            className={`flex-1 flex items-center justify-center gap-2 px-4 py-2 rounded-md text-sm font-medium transition-all ${
-              activeTab === 'paste'
-                ? 'bg-bg-tertiary text-text-primary shadow-sm'
-                : 'text-text-muted hover:text-text-secondary'
-            }`}
-          >
-            <Code2 className="w-4 h-4" />
-            Paste Code
-          </button>
-        </div>
-
-        {/* Upload tab */}
-        {activeTab === 'upload' && (
-          <div
-            onDragOver={handleDragOver}
-            onDragLeave={handleDragLeave}
-            onDrop={handleDrop}
-            className={`relative border-2 border-dashed rounded-xl p-8 text-center transition-all duration-200 cursor-pointer
-              ${isDragging
-                ? 'border-brand-500 bg-brand-500/5 shadow-glow-cyan-sm'
-                : 'border-border-default hover:border-brand-400 hover:bg-bg-tertiary/30'
-              }`}
-          >
-            <input
-              type="file"
-              multiple
-              onChange={handleFileSelect}
-              className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
-              accept=".py,.js,.jsx,.ts,.tsx,.java,.go,.rs,.c,.cpp,.h,.hpp,.swift,.zip"
-            />
-            <div className="flex flex-col items-center gap-3">
-              <div className={`w-16 h-16 rounded-xl flex items-center justify-center transition-colors
-                ${isDragging ? 'bg-brand-500/20' : 'bg-bg-tertiary'}`}>
-                <Upload className={`w-8 h-8 transition-colors ${isDragging ? 'text-brand-400' : 'text-text-muted'}`} />
-              </div>
-              <div>
-                <p className="text-text-primary font-medium">
-                  {isDragging ? 'Drop files here' : 'Drag & drop files or click to browse'}
-                </p>
-                <p className="text-text-muted text-sm mt-1">
-                  Supports .py, .js, .ts, .java, .go, .rs, .c, .cpp, .h, .swift, .zip
-                </p>
-              </div>
-            </div>
+        {/* Error banner */}
+        {displayError && (
+          <div className="flex items-start gap-3 p-4 rounded-xl mb-4 bg-severity-critical/10 border border-severity-critical/20 animate-fade-in">
+            <AlertCircle className="w-5 h-5 text-severity-critical mt-0.5 shrink-0" />
+            <p className="text-sm text-severity-critical">{displayError}</p>
           </div>
         )}
 
-        {/* Paste code tab */}
-        {activeTab === 'paste' && (
-          <div className="space-y-3">
-            <div className="rounded-xl overflow-hidden border border-border-default">
-              <Editor
-                height="300px"
-                language={language}
-                theme="vs-dark"
-                value={codeContent}
-                onChange={(value) => setCodeContent(value || '')}
-                options={{
-                  minimap: { enabled: false },
-                  scrollBeyondLastLine: false,
-                  fontSize: 13,
-                  lineNumbers: 'on',
-                  padding: { top: 12 },
-                  wordWrap: 'on',
-                  renderLineHighlight: 'all',
-                }}
-              />
+        {/* Glass card container */}
+        <div className="glass-panel p-8 space-y-6">
+          {/* Language selection */}
+          <div>
+            <label className="block text-label-md text-on-surface-variant mb-2 uppercase tracking-wider">
+              Language / Framework
+            </label>
+            <div className="relative">
+              <select
+                value={language}
+                onChange={(e) => setLanguage(e.target.value)}
+                className="w-full px-4 py-3 rounded-xl bg-surface-container-high border border-outline-variant
+                  text-sm text-on-surface appearance-none cursor-pointer
+                  focus:border-primary focus:shadow-glow-cyan-sm outline-none transition-all
+                  hover:border-primary/40"
+              >
+                {SUPPORTED_LANGUAGES.map((lang) => (
+                  <option key={lang.value} value={lang.value}>
+                    {lang.label} ({lang.extensions})
+                  </option>
+                ))}
+              </select>
+              <div className="absolute right-4 top-1/2 -translate-y-1/2 pointer-events-none">
+                <svg className="w-4 h-4 text-on-surface-variant" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+                </svg>
+              </div>
             </div>
+          </div>
+
+          {/* Segmented tab control */}
+          <div className="flex p-1.5 rounded-xl bg-surface-container-high border border-outline-variant/50">
             <button
-              onClick={handleUseCode}
-              disabled={!codeContent.trim()}
-              className="w-full py-2.5 rounded-lg border border-brand-500 text-sm font-medium text-brand-400
-                hover:bg-brand-500/10 transition-all disabled:opacity-40 disabled:cursor-not-allowed
-                flex items-center justify-center gap-2"
+              onClick={() => setActiveTab('upload')}
+              className={`flex-1 flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg text-sm font-medium transition-all duration-200
+                ${activeTab === 'upload'
+                  ? 'bg-surface-high text-primary shadow-card'
+                  : 'text-on-surface-variant hover:text-on-surface hover:bg-surface-highest/50'
+                }`}
             >
               <Upload className="w-4 h-4" />
-              Add Code to Scan Queue
+              Upload Files
+            </button>
+            <button
+              onClick={() => setActiveTab('paste')}
+              className={`flex-1 flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg text-sm font-medium transition-all duration-200
+                ${activeTab === 'paste'
+                  ? 'bg-surface-high text-primary shadow-card'
+                  : 'text-on-surface-variant hover:text-on-surface hover:bg-surface-highest/50'
+                }`}
+            >
+              <Code2 className="w-4 h-4" />
+              Paste Code
             </button>
           </div>
-        )}
 
-        {/* File list */}
-        {files.length > 0 && (
-          <div className="space-y-2">
-            <p className="text-sm font-medium text-text-secondary">
-              {files.length} file{files.length !== 1 ? 's' : ''} selected
-            </p>
-            <div className="max-h-48 overflow-y-auto space-y-1.5">
-              {files.map((file, index) => (
-                <div key={index} className="flex items-center gap-3 p-2.5 rounded-lg bg-bg-primary border border-border-default group">
-                  <FileCode className="w-4 h-4 text-brand-400 shrink-0" />
-                  <div className="flex-1 min-w-0">
-                    <p className="text-sm text-text-primary truncate">{file.name}</p>
-                    <p className="text-xs text-text-muted">{formatFileSize(file.size)}</p>
-                  </div>
-                  <button
-                    onClick={() => removeFile(index)}
-                    className="p-1 rounded text-text-muted hover:text-severity-critical hover:bg-severity-critical-bg transition-colors opacity-0 group-hover:opacity-100"
-                  >
-                    <X className="w-4 h-4" />
-                  </button>
+          {/* Upload tab */}
+          {activeTab === 'upload' && (
+            <div
+              onDragOver={handleDragOver}
+              onDragLeave={handleDragLeave}
+              onDrop={handleDrop}
+              className={`relative rounded-2xl border-2 border-dashed p-10 text-center transition-all duration-200 cursor-pointer
+                ${isDragging
+                  ? 'border-primary bg-primary/5 shadow-glow-cyan scale-[1.01]'
+                  : 'border-outline-variant hover:border-primary/40 hover:bg-surface-container/30'
+                }`}
+            >
+              <input
+                type="file"
+                multiple
+                onChange={handleFileSelect}
+                className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+                accept=".py,.js,.jsx,.ts,.tsx,.java,.go,.rs,.c,.cpp,.h,.hpp,.swift,.zip"
+              />
+
+              <div className="flex flex-col items-center gap-4">
+                <div className={`w-16 h-16 rounded-2xl flex items-center justify-center transition-all duration-200
+                  ${isDragging
+                    ? 'bg-primary/20 shadow-glow-cyan'
+                    : 'bg-surface-container-high'
+                  }`}
+                >
+                  <Upload className={`w-7 h-7 transition-colors ${isDragging ? 'text-primary' : 'text-on-surface-variant'}`} />
                 </div>
-              ))}
+                <div>
+                  <p className="text-on-surface font-medium text-body-md">
+                    {isDragging ? 'Drop files here' : 'Drag & drop files or click to browse'}
+                  </p>
+                  <p className="text-on-surface-variant text-body-sm mt-1.5">
+                    Supports .py, .js, .ts, .java, .go, .rs, .c, .cpp, .h, .swift, .zip
+                  </p>
+                </div>
+              </div>
             </div>
-          </div>
-        )}
-
-        {/* Submit button */}
-        <button
-          onClick={handleSubmit}
-          disabled={isUploading || files.length === 0}
-          className="w-full py-3 rounded-lg btn-gradient text-sm font-semibold flex items-center justify-center gap-2
-            disabled:opacity-50 disabled:cursor-not-allowed"
-        >
-          {isUploading ? (
-            <>
-              <Loader className="w-4 h-4 animate-spin" />
-              Uploading & Starting Scan...
-            </>
-          ) : (
-            <>
-              <Upload className="w-4 h-4" />
-              Start Scan
-            </>
           )}
-        </button>
+
+          {/* Paste code tab */}
+          {activeTab === 'paste' && (
+            <div className="space-y-3">
+              <div className="rounded-2xl overflow-hidden border border-outline-variant">
+                <Editor
+                  height="300px"
+                  language={language}
+                  theme="vs-dark"
+                  value={codeContent}
+                  onChange={(value) => setCodeContent(value || '')}
+                  options={{
+                    minimap: { enabled: false },
+                    scrollBeyondLastLine: false,
+                    fontSize: 13,
+                    lineNumbers: 'on',
+                    padding: { top: 12 },
+                    wordWrap: 'on',
+                    renderLineHighlight: 'all',
+                  }}
+                />
+              </div>
+              <button
+                onClick={handleUseCode}
+                disabled={!codeContent.trim()}
+                className="w-full py-2.5 rounded-xl border border-primary/40 text-sm font-medium text-primary
+                  hover:bg-primary/10 hover:border-primary transition-all
+                  disabled:opacity-30 disabled:cursor-not-allowed disabled:hover:bg-transparent
+                  flex items-center justify-center gap-2"
+              >
+                <Upload className="w-4 h-4" />
+                Add Code to Scan Queue
+              </button>
+            </div>
+          )}
+
+          {/* File queue list */}
+          {files.length > 0 && (
+            <div className="space-y-3">
+              <div className="flex items-center justify-between">
+                <p className="text-label-md text-on-surface-variant uppercase tracking-wider">
+                  {files.length} file{files.length !== 1 ? 's' : ''} selected
+                </p>
+                <button
+                  onClick={() => setFiles([])}
+                  className="text-label-sm text-on-surface-variant hover:text-severity-critical transition-colors"
+                >
+                  Clear all
+                </button>
+              </div>
+
+              <div className="max-h-52 overflow-y-auto space-y-2 pr-1">
+                {files.map((file, index) => (
+                  <div
+                    key={index}
+                    className="flex items-center gap-3 p-3 rounded-xl bg-surface-container-high border border-outline-variant/40
+                      group hover:border-primary/30 hover:bg-surface-high/50 transition-all duration-200"
+                  >
+                    <div className="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center shrink-0">
+                      <FileCode className="w-4 h-4 text-primary" />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm text-on-surface truncate font-medium">{file.name}</p>
+                      <p className="text-xs text-on-surface-variant">{formatFileSize(file.size)}</p>
+                    </div>
+                    <button
+                      onClick={() => removeFile(index)}
+                      className="p-1.5 rounded-lg text-on-surface-variant
+                        hover:text-severity-critical hover:bg-severity-critical/10
+                        transition-all opacity-0 group-hover:opacity-100"
+                    >
+                      <X className="w-4 h-4" />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Gradient CTA button */}
+          <button
+            onClick={handleSubmit}
+            disabled={isUploading || files.length === 0}
+            className="w-full py-3.5 rounded-xl btn-gradient text-sm font-semibold flex items-center justify-center gap-2
+              disabled:opacity-40 disabled:cursor-not-allowed disabled:transform-none"
+          >
+            {isUploading ? (
+              <>
+                <Loader className="w-4 h-4 animate-spin" />
+                Uploading & Starting Scan...
+              </>
+            ) : (
+              <>
+                <Upload className="w-4 h-4" />
+                Start Scan
+              </>
+            )}
+          </button>
+        </div>
       </div>
     </div>
   )

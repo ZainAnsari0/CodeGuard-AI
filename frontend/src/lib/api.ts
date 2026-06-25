@@ -3,7 +3,7 @@
  * Eliminates duplicated unwrap/apiFetch/API_BASE_URL across hooks and pages.
  */
 
-const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000'
+const API_BASE_URL = import.meta.env.VITE_API_URL ?? 'http://localhost:8000'
 
 export { API_BASE_URL }
 
@@ -46,9 +46,38 @@ export function unwrapPaginated<T>(response: unknown): T {
   return data as T
 }
 
+// ---------------------------------------------------------------------------
+// 401 auto-refresh: If an access token cookie has expired but the refresh
+// token is still valid, we transparently refresh and retry the request.
+// ---------------------------------------------------------------------------
+
+let refreshPromise: Promise<boolean> | null = null
+
+async function tryRefreshToken(): Promise<boolean> {
+  // Deduplicate concurrent refresh attempts
+  if (refreshPromise) return refreshPromise
+
+  refreshPromise = (async () => {
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/v1/auth/refresh`, {
+        method: 'POST',
+        credentials: 'include',
+      })
+      return res.ok
+    } catch {
+      return false
+    } finally {
+      refreshPromise = null
+    }
+  })()
+
+  return refreshPromise
+}
+
 /**
  * Authenticated fetch wrapper with consistent error handling.
  * Automatically includes credentials and Content-Type headers.
+ * On 401 responses, attempts a token refresh and retries once.
  */
 export async function apiFetch<T>(
   path: string,
@@ -65,11 +94,23 @@ export async function apiFetch<T>(
     headers['Content-Type'] = 'application/json'
   }
 
-  const response = await fetch(url, {
+  let response = await fetch(url, {
     ...options,
     headers,
     credentials: 'include',
   })
+
+  // On 401, attempt a token refresh and retry once
+  if (response.status === 401) {
+    const refreshed = await tryRefreshToken()
+    if (refreshed) {
+      response = await fetch(url, {
+        ...options,
+        headers,
+        credentials: 'include',
+      })
+    }
+  }
 
   if (!response.ok) {
     let detail = `API error: ${response.status}`
@@ -79,10 +120,25 @@ export async function apiFetch<T>(
     } catch {
       // response wasn't JSON, use status-based message
     }
+
+    // If still 401 after refresh, redirect to login
+    if (response.status === 401) {
+      // Clear any stale auth state
+      try { sessionStorage.removeItem('auth-storage') } catch { /* ignore */ }
+      window.location.href = '/login'
+      throw new Error('Session expired. Please log in again.')
+    }
+
     throw new Error(detail)
   }
 
   const text = await response.text()
   if (!text) return undefined as T
-  return JSON.parse(text)
+  const parsed = JSON.parse(text)
+
+  // Unwrap API envelope: { success: true, data: T }
+  if (parsed && typeof parsed === 'object' && 'data' in parsed) {
+    return parsed.data as T
+  }
+  return parsed as T
 }

@@ -1,6 +1,7 @@
 """CodeGuard AI - Scanner Entry Point
 Orchestrates Python and JavaScript AST scanning.
-Runs inside the ephemeral scanner Docker container.
+Runs in-process within the Celery worker — no container isolation needed
+since code is only parsed, never executed.
 """
 
 import json

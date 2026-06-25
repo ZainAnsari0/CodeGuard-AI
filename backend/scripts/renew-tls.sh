@@ -13,7 +13,7 @@ DOMAIN="${DOMAIN:-localhost}"
 echo "$(date '+%Y-%m-%d %H:%M:%S') — Starting TLS renewal for ${DOMAIN}"
 
 # ── Renew certificate ──────────────────────────────────────
-if ! certbot renew --quiet --force-renewal 2>/dev/null; then
+if ! sudo certbot renew --quiet --force-renewal 2>/dev/null; then
     echo "ERROR: certbot renewal failed. Check certbot logs."
     exit 1
 fi
@@ -22,9 +22,9 @@ fi
 LE_DIR="/etc/letsencrypt/live/${DOMAIN}"
 
 if [ -d "${LE_DIR}" ]; then
-    cp "${LE_DIR}/privkey.pem" "${CERTS_DIR}/tls_private.key"
-    cp "${LE_DIR}/fullchain.pem" "${CERTS_DIR}/fullchain.pem"
-    cp "${LE_DIR}/cert.pem" "${CERTS_DIR}/tls_cert.pem"
+    sudo cp "${LE_DIR}/privkey.pem" "${CERTS_DIR}/tls_private.key"
+    sudo cp "${LE_DIR}/fullchain.pem" "${CERTS_DIR}/fullchain.pem"
+    sudo cp "${LE_DIR}/cert.pem" "${CERTS_DIR}/tls_cert.pem"
     chmod 600 "${CERTS_DIR}/tls_private.key"
     chmod 644 "${CERTS_DIR}/tls_cert.pem" "${CERTS_DIR}/fullchain.pem"
     echo "Copied renewed certificates to ${CERTS_DIR}"
@@ -35,8 +35,7 @@ fi
 
 # ── Reload nginx ──────────────────────────────────────────
 echo "Reloading nginx..."
-docker compose -f "${PROJECT_DIR}/../docker-compose.yml" \
-    -f "${PROJECT_DIR}/../docker-compose.prod.yml" \
-    exec frontend nginx -s reload
+sudo systemctl reload nginx 2>/dev/null || sudo nginx -s reload 2>/dev/null || \
+    echo "WARNING: Could not reload nginx — reload manually"
 
 echo "$(date '+%Y-%m-%d %H:%M:%S') — TLS renewal complete for ${DOMAIN}"

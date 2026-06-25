@@ -6,6 +6,7 @@ Pydantic-based settings management with environment variable support.
 from pydantic_settings import BaseSettings
 from pydantic import field_validator, model_validator
 from typing import List, Optional
+import os
 import secrets
 
 
@@ -53,8 +54,11 @@ class Settings(BaseSettings):
     # AI/ML Settings
     OPENAI_API_KEY: Optional[str] = None
     GROQ_API_KEY: Optional[str] = None
-    OLLAMA_URL: str = "http://localhost:11434"  # Override with http://host.docker.internal:11434 in Docker
+    ANTHROPIC_API_KEY: Optional[str] = None
+    OPENROUTER_API_KEY: Optional[str] = None
+    OLLAMA_URL: str = "http://localhost:11434"
     DEFAULT_MODEL: str = "llama3:8b"
+    AI_MAX_CONCURRENCY: int = 3
 
     # Frontend URL (for password reset links etc.)
     FRONTEND_URL: str = "http://localhost:3000"
@@ -74,16 +78,19 @@ class Settings(BaseSettings):
     # File Settings
     MAX_FILE_SIZE: int = 10485760  # 10MB
     ALLOWED_EXTENSIONS: List[str] = [".py", ".js", ".ts", ".java", ".go", ".rs", ".c", ".cpp", ".h", ".hpp", ".swift"]
-    UPLOAD_DIR: str = "/tmp/codeguard_uploads"
+    UPLOAD_DIR: str = os.path.join(
+        os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+        "uploads"
+    )
     MAX_ZIP_ENTRIES: int = 1000
     MAX_ZIP_DEPTH: int = 3
     MAX_ZIP_RATIO: float = 10.0
 
     # Scanner Settings
-    SCANNER_IMAGE: str = "codeguard-scanner:latest"
     SCANNER_TIMEOUT: int = 600  # 10 minutes
-    SCANNER_MEM_LIMIT: str = "1g"
     MAX_CONCURRENT_SCANS: int = 5
+    WORKSPACE_MAX_AGE_SECONDS: int = 3600  # 1 hour
+    WORKSPACE_CLEANUP_ON_STARTUP: bool = True
 
     # Prompt Cache Settings
     PROMPT_CACHE_ENABLED: bool = True
@@ -144,7 +151,7 @@ class Settings(BaseSettings):
         return self
 
     model_config = {
-        "env_file": ".env",
+        "env_file": [".env", os.path.join(os.path.dirname(__file__), "..", "..", ".env")],
         "case_sensitive": True,
     }
 

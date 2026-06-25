@@ -74,27 +74,26 @@ class PromptCache:
         self._client = None
         self._fallback = LRUCache(max_size=256)
 
-    def _get_client(self):
-        """Lazy-initialize synchronous Redis client for health_check only.
-
-        For all async operations, use the async methods which use
-        asyncio.to_thread to avoid blocking the event loop.
-        """
-        if self._client is not None:
-            return self._client
+    async def initialize(self) -> None:
+        """Asynchronously initialize and ping the Redis client to check connection status."""
+        if not self.enabled or self._client is not None:
+            return
 
         try:
             import redis
             from app.core.config import settings
             url = self.redis_url or getattr(settings, "REDIS_URL", "redis://localhost:6379/2")
-            self._client = redis.from_url(url, decode_responses=True)
-            self._client.ping()
+            client = redis.from_url(url, decode_responses=True)
+            await asyncio.to_thread(client.ping)
+            self._client = client
             logger.info("PromptCache connected to Redis")
-            return self._client
         except Exception as e:
             logger.warning("PromptCache: Redis unavailable, using LRU fallback: %s", e)
             self._client = None
-            return None
+
+    def _get_client(self):
+        """Get the initialized Redis client. Does NOT block the event loop with synchronous ping."""
+        return self._client
 
     def _make_key(self, template_name: str, prompt_hash: str, model: str) -> str:
         return f"prompt_cache:{template_name}:{model}:{prompt_hash}"

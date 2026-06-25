@@ -164,7 +164,20 @@ function scanFile(filePath) {
 
     // Regex-based checks (always runs, even when AST parsing fails)
     lines.forEach((line, idx) => {
-      if (/(?:password|secret|api_key|apikey|token)\s*[:=]\s*['"][^'"]{8,}['"]/i.test(line)) {
+      // Hardcoded credential regex — exclude matches inside SQL/template literal contexts
+      // where 'password = ${...}' or 'password = :var' are NOT actual hardcoded secrets.
+      // Positive: const API_KEY = "sk-abc123def456"
+      // Negative: AND password = '${password}'  (SQL injection, not hardcoded)
+      // Negative: password = :password           (parameterized query placeholder)
+      const hardcodedCredMatch = line.match(/(?:password|passwd|secret|api_key|apikey|token|auth_key)\s*[:=]\s*['"][^'"]{8,}['"]/i);
+      if (hardcodedCredMatch) {
+        const matchedText = hardcodedCredMatch[0];
+        // Skip if the quoted value contains template expressions like ${...} — it's dynamic, not hardcoded
+        if (/\$\{[^}]+\}/.test(matchedText)) return;
+        // Skip if inside a SQL context (line contains SQL keywords near the match)
+        const lineLower = line.toLowerCase();
+        if (/\b(?:select|insert|update|delete|where|from|and|or)\b/i.test(line) &&
+            /=\s*['"][^'"]*\$\{|=\s*['"][^'']*:\w/.test(line)) return;
         const lineNum = idx + 1;
         // Avoid duplicating AST findings
         const alreadyFound = findings.some(f => f.line_number === lineNum && f.vulnerability_type === "Hardcoded Secret");
