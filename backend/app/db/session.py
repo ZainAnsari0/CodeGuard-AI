@@ -57,18 +57,34 @@ def _init_engine():
                     timeout_ms = settings.DATABASE_STATEMENT_TIMEOUT * 1000
                     if settings.DATABASE_URL.startswith("postgresql+asyncpg"):
                         # asyncpg uses server_settings, not libpq options
-                        engine_kwargs["connect_args"] = {
-                            "server_settings": {
-                                "statement_timeout": str(timeout_ms)
-                            }
-                        }
+                        if "connect_args" not in engine_kwargs:
+                            engine_kwargs["connect_args"] = {}
+                        if "server_settings" not in engine_kwargs["connect_args"]:
+                            engine_kwargs["connect_args"]["server_settings"] = {}
+                        engine_kwargs["connect_args"]["server_settings"]["statement_timeout"] = str(timeout_ms)
                     else:
                         # psycopg2 / other drivers use libpq options
                         engine_kwargs["connect_args"] = {
                             "options": f"-c statement_timeout={timeout_ms}"
                         }
 
-            _engine = create_async_engine(settings.DATABASE_URL, **engine_kwargs)
+            db_url = settings.DATABASE_URL
+            if not is_sqlite and "sslmode" in db_url:
+                import urllib.parse
+                parsed = urllib.parse.urlparse(db_url)
+                query_params = urllib.parse.parse_qs(parsed.query)
+                sslmode = query_params.pop("sslmode", [None])[0]
+                new_query = urllib.parse.urlencode(query_params, doseq=True)
+                parsed = parsed._replace(query=new_query)
+                db_url = urllib.parse.urlunparse(parsed)
+                
+                # Configure SSL for asyncpg
+                if "connect_args" not in engine_kwargs:
+                    engine_kwargs["connect_args"] = {}
+                if sslmode in ["require", "prefer", "allow", "verify-ca", "verify-full"]:
+                    engine_kwargs["connect_args"]["ssl"] = True
+
+            _engine = create_async_engine(db_url, **engine_kwargs)
 
             # Enable WAL mode and foreign keys for SQLite
             if is_sqlite:

@@ -98,7 +98,6 @@ async def lifespan(app: FastAPI):
 
     # Ensure upload directory exists with proper permissions
     import os
-    from app.core.config import settings
     upload_dir = getattr(settings, "UPLOAD_DIR", "/tmp/codeguard_uploads")
     try:
         os.makedirs(upload_dir, exist_ok=True)

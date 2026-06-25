@@ -15,10 +15,15 @@ if not settings.REDIS_ENABLED:
         "Set REDIS_ENABLED=True and configure REDIS_URL to enable background tasks."
     )
 
+redis_url = settings.REDIS_URL
+if redis_url and redis_url.startswith("rediss://") and "ssl_cert_reqs" not in redis_url:
+    separator = "&" if "?" in redis_url else "?"
+    redis_url = f"{redis_url}{separator}ssl_cert_reqs=none"
+
 celery_app = Celery(
     "codeguard_ai",
-    broker=settings.REDIS_URL,
-    backend=settings.REDIS_URL,
+    broker=redis_url,
+    backend=redis_url,
     include=[
         "app.tasks.scan_tasks",
         "app.tasks.auth_tasks",
