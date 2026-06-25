@@ -50,12 +50,13 @@ router = APIRouter()
 def set_auth_cookies(response: Response, access_token: str, refresh_token: str):
     """Set httpOnly secure cookies for auth tokens."""
     secure = settings.ENVIRONMENT == "production"
+    samesite = "none" if secure else "lax"
     response.set_cookie(
         key="access_token",
         value=access_token,
         httponly=True,
         secure=secure,
-        samesite="lax",
+        samesite=samesite,
         max_age=settings.JWT_ACCESS_TOKEN_EXPIRE_MINUTES * 60,
         path="/",
     )
@@ -64,7 +65,7 @@ def set_auth_cookies(response: Response, access_token: str, refresh_token: str):
         value=refresh_token,
         httponly=True,
         secure=secure,
-        samesite="lax",
+        samesite=samesite,
         max_age=settings.JWT_REFRESH_TOKEN_EXPIRE_DAYS * 86400,
         path="/api/v1/auth",
     )
@@ -313,8 +314,10 @@ async def logout(
         await revoke_access_token(at)
 
     # Clear httpOnly cookies
-    response.delete_cookie(key="access_token", path="/")
-    response.delete_cookie(key="refresh_token", path="/api/v1/auth")
+    secure = settings.ENVIRONMENT == "production"
+    samesite = "none" if secure else "lax"
+    response.delete_cookie(key="access_token", path="/", secure=secure, samesite=samesite)
+    response.delete_cookie(key="refresh_token", path="/api/v1/auth", secure=secure, samesite=samesite)
 
     return ResponseSchema(
         message="Logged out successfully",
