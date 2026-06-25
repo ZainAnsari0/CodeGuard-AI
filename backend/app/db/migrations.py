@@ -56,6 +56,34 @@ async def ensure_schema(engine: AsyncEngine) -> None:
     """
     if settings.ENVIRONMENT == "production":
         logger.info("Production mode: running alembic migrations...")
+        
+        # Check if database has existing tables from create_all but no alembic_version
+        try:
+            async with engine.connect() as conn:
+                from sqlalchemy import text
+                has_users = await conn.scalar(
+                    text("SELECT EXISTS (SELECT FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'users')")
+                )
+                has_alembic = await conn.scalar(
+                    text("SELECT EXISTS (SELECT FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'alembic_version')")
+                )
+                
+                if has_users and not has_alembic:
+                    logger.warning("Database has existing tables but no alembic_version. Stamping to head...")
+                    alembic_ini = get_alembic_config_path()
+                    stamp_result = subprocess.run(
+                        [sys.executable, "-m", "alembic", "-c", str(alembic_ini), "stamp", "head"],
+                        capture_output=True,
+                        text=True,
+                        cwd=str(alembic_ini.parent),
+                    )
+                    if stamp_result.returncode == 0:
+                        logger.info("Alembic stamped database to head successfully")
+                    else:
+                        logger.error("Failed to stamp database: %s", stamp_result.stderr)
+        except Exception as e:
+            logger.warning("Failed to check database tables for bootstrapping: %s", e)
+
         if not run_alembic_upgrade():
             raise RuntimeError(
                 "Database migrations failed — refusing to start in production. "
