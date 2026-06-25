@@ -19,9 +19,14 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    # Create enum types for PostgreSQL
-    severity_enum = postgresql.ENUM('critical', 'high', 'medium', 'low', 'info', name='severity', create_type=True)
-    severity_enum.create(op.get_bind(), checkfirst=True)
+    # Create enum types for PostgreSQL if they don't exist
+    bind = op.get_bind()
+    if bind.dialect.name == 'postgresql':
+        result = bind.execute(sa.text("SELECT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'severity')"))
+        if not result.scalar():
+            bind.execute(sa.text("CREATE TYPE severity AS ENUM ('critical', 'high', 'medium', 'low', 'info')"))
+
+    severity_enum = postgresql.ENUM('critical', 'high', 'medium', 'low', 'info', name='severity', create_type=False)
 
     # Users table
     op.create_table(
@@ -152,5 +157,6 @@ def downgrade() -> None:
     op.drop_table('projects')
     op.drop_table('users')
 
-    severity_enum = postgresql.ENUM('critical', 'high', 'medium', 'low', 'info', name='severity', create_type=False)
-    severity_enum.drop(op.get_bind(), checkfirst=True)
+    bind = op.get_bind()
+    if bind.dialect.name == 'postgresql':
+        bind.execute(sa.text("DROP TYPE IF EXISTS severity"))
