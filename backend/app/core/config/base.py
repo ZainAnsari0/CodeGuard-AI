@@ -75,6 +75,7 @@ class SecuritySettings(BaseSettings):
         "http://localhost:5173", "http://localhost:3000",
         "http://127.0.0.1:5173", "http://127.0.0.1:3000",
     ]
+    CORS_ORIGIN_REGEX: Optional[str] = None
     CORS_ALLOW_CREDENTIALS: bool = True
     CORS_ALLOW_METHODS: List[str] = ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"]
     CORS_ALLOW_HEADERS: List[str] = ["Authorization", "Content-Type", "Accept", "X-Requested-With"]
