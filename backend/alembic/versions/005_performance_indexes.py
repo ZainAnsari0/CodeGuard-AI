@@ -26,8 +26,12 @@ def upgrade() -> None:
     op.create_index('idx_analyses_status', 'analyses', ['status'])
     op.create_index('idx_analyses_project_status', 'analyses', ['project_id', 'status'])
     op.create_index('idx_analyses_created_at', 'analyses', ['created_at'])
-    # Renamed from misleading 'idx_analyses_user_id' — this is a GIN index on analysis_metadata
-    op.create_index('idx_analyses_metadata_gin', 'analyses', ['analysis_metadata'], postgresql_using='gin')
+    
+    # Convert analysis_metadata to JSONB so we can create a GIN index on it (PostgreSQL only)
+    bind = op.get_bind()
+    if bind.dialect.name == 'postgresql':
+        op.execute("ALTER TABLE analyses ALTER COLUMN analysis_metadata TYPE jsonb USING analysis_metadata::jsonb")
+        op.create_index('idx_analyses_metadata_gin', 'analyses', ['analysis_metadata'], postgresql_using='gin')
 
     # Share tokens - created_by index (token already has unique constraint from migration 004)
     op.create_index('idx_share_tokens_created_by', 'share_tokens', ['created_by'])
@@ -39,7 +43,12 @@ def upgrade() -> None:
 def downgrade() -> None:
     op.drop_index('idx_enrollments_student_id', 'enrollments')
     op.drop_index('idx_share_tokens_created_by', 'share_tokens')
-    op.drop_index('idx_analyses_metadata_gin', 'analyses')
+    
+    bind = op.get_bind()
+    if bind.dialect.name == 'postgresql':
+        op.drop_index('idx_analyses_metadata_gin', 'analyses')
+        op.execute("ALTER TABLE analyses ALTER COLUMN analysis_metadata TYPE json USING analysis_metadata::json")
+    
     op.drop_index('idx_analyses_created_at', 'analyses')
     op.drop_index('idx_analyses_project_status', 'analyses')
     op.drop_index('idx_analyses_status', 'analyses')
