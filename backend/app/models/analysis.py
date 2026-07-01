@@ -60,7 +60,10 @@ class FindingBase(SQLModel):
         description="Type of vulnerability (e.g., 'SQL Injection', 'XSS')"
     )
     severity: Severity = Field(
-        sa_column=Column(Enum(Severity), nullable=False),
+        sa_column=Column(
+            Enum(Severity, values_callable=lambda obj: [e.value for e in obj]),
+            nullable=False
+        ),
         description="Severity level"
     )
     title: str = Field(
