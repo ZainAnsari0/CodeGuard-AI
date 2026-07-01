@@ -16,6 +16,7 @@ from app.core.exceptions import ValidationError, UnauthorizedException
 from app.db.session import get_session
 from app.db.base import ResponseSchema
 from app.models.user import User
+from app.models.system_event import SystemEvent
 from app.api.dependencies import get_current_user
 from app.schemas.auth import (
     Token,
@@ -105,10 +106,23 @@ async def register(
         role=role,
         is_active=True,
         is_superuser=False,
+        last_login=datetime.now(timezone.utc),
     )
     db.add(user)
     await db.commit()
     await db.refresh(user)
+
+    # Log registration event
+    event = SystemEvent(
+        id=str(uuid.uuid4()),
+        event_type="user_registered",
+        severity="info",
+        user_id=user.id,
+        message=f"User {user.email} registered successfully.",
+        metadata_={"role": user.role}
+    )
+    db.add(event)
+    await db.commit()
 
     access_token = create_access_token(user.id, extra_claims={"role": user.role})
     refresh_token = create_refresh_token(user.id)
@@ -172,6 +186,17 @@ async def login(
     set_auth_cookies(request, response, access_token, refresh_token)
 
     user.last_login = datetime.now(timezone.utc)
+    db.add(user)
+
+    # Log login event
+    event = SystemEvent(
+        id=str(uuid.uuid4()),
+        event_type="user_login",
+        severity="info",
+        user_id=user.id,
+        message=f"User {user.email} logged in successfully.",
+    )
+    db.add(event)
     await db.commit()
 
     return ResponseSchema(
@@ -302,7 +327,8 @@ async def update_me(
 async def logout(
     request: Request,
     response: Response,
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_session)
 ) -> Any:
     """Logout current user and clear auth cookies."""
     # Revoke the refresh token if available
@@ -322,6 +348,17 @@ async def logout(
     samesite = "none" if secure else "lax"
     response.delete_cookie(key="access_token", path="/", secure=secure, samesite=samesite)
     response.delete_cookie(key="refresh_token", path="/api/v1/auth", secure=secure, samesite=samesite)
+
+    # Log logout event
+    event = SystemEvent(
+        id=str(uuid.uuid4()),
+        event_type="user_logout",
+        severity="info",
+        user_id=current_user.id,
+        message=f"User {current_user.email} logged out successfully.",
+    )
+    db.add(event)
+    await db.commit()
 
     return ResponseSchema(
         message="Logged out successfully",

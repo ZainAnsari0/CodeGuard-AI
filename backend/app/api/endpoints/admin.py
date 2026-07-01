@@ -174,21 +174,28 @@ async def system_health(
     overall_status = "healthy"
 
     async def _check_db():
+        start = time_module.perf_counter()
         try:
             await db.execute(select(1))
-            return ServiceStatus(name="database", status="healthy", latency_ms=0).model_dump()
+            latency = (time_module.perf_counter() - start) * 1000
+            return ServiceStatus(name="database", status="healthy", latency_ms=round(latency, 2)).model_dump()
         except Exception as e:
             return ServiceStatus(name="database", status="unhealthy", details=str(e)[:100]).model_dump()
 
     async def _check_redis():
+        start = time_module.perf_counter()
         try:
             from app.services.cache import prompt_cache
-            health_info = prompt_cache.health_check()
-            if health_info.get("connected"):
-                return ServiceStatus(name="redis", status="healthy", latency_ms=0).model_dump()
-            if health_info.get("enabled") and not health_info.get("connected"):
-                return ServiceStatus(name="redis", status="degraded", details="Cache using LRU fallback").model_dump()
-            return ServiceStatus(name="redis", status="unhealthy", details=health_info.get("error", "Unknown")[:100]).model_dump()
+            client = prompt_cache._get_client()
+            if client is not None:
+                await asyncio.to_thread(client.ping)
+                latency = (time_module.perf_counter() - start) * 1000
+                return ServiceStatus(name="redis", status="healthy", latency_ms=round(latency, 2)).model_dump()
+            else:
+                health_info = prompt_cache.health_check()
+                if health_info.get("enabled"):
+                    return ServiceStatus(name="redis", status="degraded", details="Cache using LRU fallback").model_dump()
+                return ServiceStatus(name="redis", status="unhealthy", details="Redis not initialized/enabled").model_dump()
         except Exception as e:
             return ServiceStatus(name="redis", status="unhealthy", details=str(e)[:100]).model_dump()
 
@@ -222,7 +229,7 @@ async def system_health(
     user_count = await db.execute(select(func.count()).select_from(User))
     scan_count = await db.execute(select(func.count()).select_from(Analysis))
 
-    uptime = time_module.time() - _start_time if '_start_time' in dir() else 0
+    uptime = time_module.time() - _start_time
 
     return {
         "success": True,
@@ -231,11 +238,11 @@ async def system_health(
             uptime_seconds=uptime,
             services=services,
             version=settings.PROJECT_VERSION,
+            stats={
+                "total_users": user_count.scalar() or 0,
+                "total_scans": scan_count.scalar() or 0,
+            },
         ).model_dump(),
-        "stats": {
-            "total_users": user_count.scalar() or 0,
-            "total_scans": scan_count.scalar() or 0,
-        },
     }
 
 

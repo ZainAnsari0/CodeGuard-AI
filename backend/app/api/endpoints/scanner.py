@@ -26,6 +26,7 @@ from app.models.user import User
 from app.models.analysis import Analysis
 from app.models.code_file import CodeFile
 from app.models.project import Project
+from app.models.system_event import SystemEvent
 from app.schemas.scanner import ScanUploadResponse, ScanStatusResponse, ScanResultResponse, FindingResponse, FixSuggestionResponse
 from app.api.dependencies import get_current_user, check_analysis_ownership
 from app.services.file_validator import file_validator
@@ -188,6 +189,17 @@ async def upload_scan_files(
 
         for cf in validated_files:
             cf.file_metadata["analysis_id"] = scan_id
+
+        # Log scan upload event
+        event = SystemEvent(
+            id=str(uuid.uuid4()),
+            event_type="scan_uploaded",
+            severity="info",
+            user_id=str(current_user.id),
+            message=f"User uploaded {total_files} file(s) for scan {scan_id}.",
+            metadata_={"scan_id": scan_id, "file_count": total_files}
+        )
+        db.add(event)
 
         await db.commit()
 

@@ -44,6 +44,8 @@ class FindingDict(TypedDict):
 
 
 from sqlalchemy import create_engine, text
+from sqlalchemy.orm import Session
+from app.models.system_event import SystemEvent
 
 from app.tasks.celery_app import celery_app
 from app.core.config import settings
@@ -118,7 +120,33 @@ def _increment_scan_progress(scan_id: str):
                 )
                 conn.commit()
     except Exception as e:
-        logger.warning(f"Failed to increment scan progress: {e}")
+        logger.error(f"Failed to increment scan progress: {e}")
+
+
+def _log_system_event_sync(
+    event_type: str,
+    severity: str,
+    message: str,
+    user_id: Optional[str] = None,
+    metadata: Optional[dict] = None
+):
+    """Log a system event synchronously from a Celery task."""
+    try:
+        engine = _get_sync_engine()
+        with Session(engine) as session:
+            event = SystemEvent(
+                id=str(uuid.uuid4()),
+                event_type=event_type,
+                severity=severity,
+                user_id=user_id,
+                message=message,
+                metadata_=metadata,
+                created_at=datetime.now(timezone.utc),
+            )
+            session.add(event)
+            session.commit()
+    except Exception as e:
+        logger.error(f"Failed to log system event sync: {e}", exc_info=True)
 
 
 # ---------------------------------------------------------------------------
@@ -391,6 +419,12 @@ def _run_python_scanner(file_path: str, content: str) -> List[FindingDict]:
     The scanner analyzes the AST of the source code — it never executes
     the code.
     """
+    import sys as _sys
+    # Ensure backend/ root is on sys.path so 'scanner' package is importable
+    # regardless of the working directory set by the process manager (e.g. Render).
+    _backend_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    if _backend_root not in _sys.path:
+        _sys.path.insert(0, _backend_root)
     from scanner.python_scanner import PythonScanner
 
     scanner = PythonScanner()
@@ -811,6 +845,13 @@ def run_scan_task(self, scan_id: str, file_ids: List[str], user_id: str) -> Dict
 
     try:
         _update_analysis_status(scan_id, "running")
+        _log_system_event_sync(
+            event_type="scan_started",
+            severity="info",
+            message=f"Security scan {scan_id} started.",
+            user_id=user_id,
+            metadata={"scan_id": scan_id, "file_count": len(file_ids)}
+        )
     except Exception as e:
         logger.error(f"Failed to set scan status to running: {e}")
 
@@ -824,6 +865,13 @@ def run_scan_task(self, scan_id: str, file_ids: List[str], user_id: str) -> Dict
             if not os.path.isdir(upload_dir):
                 logger.error(f"Upload directory not found: {upload_dir}")
                 _update_analysis_status(scan_id, "failed", error="Upload directory not found")
+                _log_system_event_sync(
+                    event_type="scan_failed",
+                    severity="error",
+                    message=f"Security scan {scan_id} failed: Upload directory not found.",
+                    user_id=user_id,
+                    metadata={"scan_id": scan_id, "error": "Upload directory not found"}
+                )
                 return {"status": "failed", "error": "Upload directory not found"}
 
         scan_config = {
@@ -834,14 +882,35 @@ def run_scan_task(self, scan_id: str, file_ids: List[str], user_id: str) -> Dict
 
         # Run the entire async pipeline in a single event loop
         result = asyncio.run(_run_scan_async(scan_id, file_ids, user_id, upload_dir, scan_config))
+        _log_system_event_sync(
+            event_type="scan_completed",
+            severity="info",
+            message=f"Security scan {scan_id} completed successfully.",
+            user_id=user_id,
+            metadata={"scan_id": scan_id, **result}
+        )
         return result
 
     except Exception as e:
         logger.error(f"Scan task failed: {e}", exc_info=True)
         if self.request.retries < self.max_retries:
+            _log_system_event_sync(
+                event_type="scan_failed",
+                severity="warning",
+                message=f"Security scan {scan_id} failed on attempt {self.request.retries + 1}. Retrying...",
+                user_id=user_id,
+                metadata={"scan_id": scan_id, "error": str(e), "retry": True}
+            )
             raise self.retry(exc=e, countdown=60)
         else:
             _update_analysis_status(scan_id, "failed", error=str(e)[:500])
+            _log_system_event_sync(
+                event_type="scan_failed",
+                severity="error",
+                message=f"Security scan {scan_id} failed: {str(e)[:200]}",
+                user_id=user_id,
+                metadata={"scan_id": scan_id, "error": str(e)}
+            )
     finally:
         # Clean up temporary workspace to prevent disk space accumulation
         workspace_service.cleanup_workspace(scan_id)
@@ -933,16 +1002,17 @@ def _persist_findings(scan_id: str, file_ids: List[str], findings: List[FindingD
             for finding_data in findings:
                 finding_id = str(uuid.uuid4())
 
-                # Normalize severity to enum member name (CRITICAL/HIGH/MEDIUM/LOW/INFO)
+                # Normalize severity to the PostgreSQL enum value (lowercase)
+                # The DB enum stores: 'critical', 'high', 'medium', 'low', 'info'
                 severity_raw = finding_data.get("severity", "medium").lower()
                 severity_map = {
-                    "critical": "CRITICAL",
-                    "high": "HIGH",
-                    "medium": "MEDIUM",
-                    "low": "LOW",
-                    "info": "INFO",
+                    "critical": "critical",
+                    "high": "high",
+                    "medium": "medium",
+                    "low": "low",
+                    "info": "info",
                 }
-                severity_db = severity_map.get(severity_raw, "MEDIUM")
+                severity_db = severity_map.get(severity_raw, "medium")
 
                 code_snippet = finding_data.get("code_snippet", "")
                 line_start = finding_data.get("line_number", finding_data.get("line_start", 0))

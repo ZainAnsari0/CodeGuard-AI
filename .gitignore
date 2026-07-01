@@ -107,3 +107,13 @@ landing-page-redesigned.png
 # SQLite WAL/SHM files
 *.db-shm
 *.db-wal
+
+# Local redesign prompt docs & AI artifacts
+CodeGuard-AI-Antigravity-Redesign-Prompts.md
+CodeGuard-AI-Antigravity-Redesign-Prompts\ \(2\).md
+
+# Frontend build archive backups
+frontend.zip
+
+# Local vulnerability test scripts (never commit sample attack code)
+vuln.py

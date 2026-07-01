@@ -3,13 +3,12 @@ CodeGuard AI - Admin Schemas
 Pydantic schemas for admin user management and system monitoring.
 """
 
-from typing import Optional, List, Literal
+from typing import Optional, List, Literal, Dict
 from datetime import datetime
 from pydantic import BaseModel, Field, EmailStr
 
 
 # --- Admin User Management ---
-
 class AdminUserResponse(BaseModel):
     id: str
     email: str
@@ -47,6 +46,7 @@ class SystemHealthResponse(BaseModel):
     uptime_seconds: float
     services: List[ServiceStatus]
     version: str
+    stats: Optional[Dict[str, int]] = None
 
 
 # --- Event Logs ---
